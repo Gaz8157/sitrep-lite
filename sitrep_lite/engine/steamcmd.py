@@ -84,9 +84,8 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
         await ensure_steamcmd()
 
         _write_log("Running SteamCMD self-update (first run may take a minute)...", instance_id)
-        await _run_steamcmd([str(STEAMCMD_EXE), "+quit"], "SteamCMD self-update")
-        _write_log("Running SteamCMD self-update pass 2...", instance_id)
-        await _run_steamcmd([str(STEAMCMD_EXE), "+quit"], "SteamCMD self-update 2")
+        await _run_steamcmd([str(STEAMCMD_EXE), "+login", "anonymous", "+quit"], "SteamCMD init")
+        _write_log("SteamCMD initialized.", instance_id)
 
         server_exe = srv_dir / "ArmaReforgerServer.exe"
         if server_exe.exists() and not force:

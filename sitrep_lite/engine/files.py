@@ -28,9 +28,11 @@ def list_files(rel_path: str = "", *, instance_id: int | None = None) -> dict[st
     entries = []
     for item in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         stat = item.stat()
+        is_dir = item.is_dir()
         entries.append({
             "name": item.name,
-            "is_dir": item.is_dir(),
+            "is_dir": is_dir,
+            "type": "dir" if is_dir else "file",
             "size": stat.st_size if item.is_file() else 0,
             "mtime": int(stat.st_mtime),
         })
