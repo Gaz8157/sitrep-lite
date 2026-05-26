@@ -122,6 +122,18 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
             _install_state = {"status": "error", "error": f"SteamCMD exit code {result['returncode']}"}
             return
 
+        _write_log("Running final validation pass...", instance_id)
+        await _run_steamcmd(
+            [
+                str(STEAMCMD_EXE),
+                "+force_install_dir", install_dir,
+                "+login", "anonymous",
+                "+app_update", str(REFORGER_APP_ID), "validate",
+                "+quit",
+            ],
+            "Final validation",
+        )
+
         if server_exe.exists():
             _write_log("=== Server installed successfully! ===", instance_id)
             _install_state = {"status": "installed"}

@@ -61,7 +61,16 @@ async def start_server(instance_id: int, user=Depends(require_server_role(*_OP_R
             return {"state": "installing", "message": "Server is being installed. Check Console for progress."}
         await install_server(instance_id=instance_id)
         return {"state": "installing", "message": "Installing server via SteamCMD. Check Console for progress."}
-    return _get_engine(instance_id).lifecycle.start()
+    import asyncio
+    result = _get_engine(instance_id).lifecycle.start()
+    if result.get("state") == "started":
+        await asyncio.sleep(3)
+        engine = _get_engine(instance_id)
+        if engine.lifecycle.pid is None:
+            from ..engine.steamcmd import install_server as do_validate
+            await do_validate(force=True, instance_id=instance_id)
+            return {"state": "revalidating", "message": "Server crashed on start — re-validating install. Check Console."}
+    return result
 
 
 @router.post("/{instance_id}/update")
