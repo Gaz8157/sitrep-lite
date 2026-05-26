@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI):
     ensure_dirs()
     panel_migrate()
     state_migrate()
+    from .engine.config import ensure_default_config
+    from .services.settings import _load_or_create_secrets
+    secrets = _load_or_create_secrets()
+    ensure_default_config(secrets.get("rcon_password", ""))
     _engine = ServerEngine()
     server.set_engine(_engine)
     yield
