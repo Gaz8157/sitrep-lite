@@ -76,41 +76,72 @@ def packages_stub() -> dict:
 
 _storage_cache: dict[int, tuple[float, dict]] = {}
 
+
+def _dir_size(path: Path) -> int:
+    if not path.is_dir():
+        return 0
+    try:
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except Exception:
+        return 0
+
+
 @app.get("/api/servers/{instance_id}/storage")
 def storage_info(instance_id: int) -> dict:
+    import json as _json
     import shutil as _shutil
+
     now = time.time()
     cached = _storage_cache.get(instance_id)
     if cached and now - cached[0] < 60:
         return cached[1]
-    from .paths import instance_dir
+
+    from .paths import instance_dir, instance_profile, instance_server
+
     idir = instance_dir(instance_id)
+    prof = instance_profile(instance_id)
+    sdir = instance_server(instance_id)
+
     try:
         disk = _shutil.disk_usage(str(idir.parent if idir.exists() else "."))
     except Exception:
         disk = type("D", (), {"total": 0, "free": 0})()
+
+    # Mods: count from config, size from server workshop dir
+    mod_count = 0
+    mods_size = 0
+    config_path = idir / "config.json"
+    if config_path.is_file():
+        try:
+            cfg = _json.loads(config_path.read_text(encoding="utf-8"))
+            mod_list = cfg.get("game", {}).get("mods", [])
+            mod_count = len(mod_list)
+        except Exception:
+            pass
+
+    logs_size = _dir_size(prof / "logs")
+    saves_size = _dir_size(prof / ".save")
+    server_size = _dir_size(sdir)
+
+    total = mods_size + logs_size + saves_size + server_size
+
+    mod_label = f"{mod_count} mods loaded" if mod_count else "No mods"
+
+    breakdown = {
+        "mods": {"size_mb": round(mods_size / 1e6, 1), "label": mod_label},
+        "logs": {"size_mb": round(logs_size / 1e6, 1), "label": "Logs"},
+        "saves": {"size_mb": round(saves_size / 1e6, 1), "label": "Saves"},
+        "server": {"size_mb": round(server_size / 1e6, 1), "label": "Server install"},
+    }
+
     result = {
-        "total_bytes": 0,
-        "breakdown": {},
+        "total_bytes": total,
+        "breakdown": breakdown,
         "disk_total_gb": round(disk.total / 1e9, 1),
         "disk_free_gb": round(disk.free / 1e9, 1),
         "quotas": {},
-        "usage": {"total_mb": 0},
+        "usage": {"total_mb": round(total / 1e6, 1)},
     }
-    if idir.exists():
-        try:
-            total = 0
-            breakdown = {}
-            for sub in idir.iterdir():
-                if sub.is_dir():
-                    size = sum(f.stat().st_size for f in sub.rglob("*") if f.is_file())
-                    breakdown[sub.name] = round(size / 1e6, 1)
-                    total += size
-            result["total_bytes"] = total
-            result["breakdown"] = breakdown
-            result["usage"]["total_mb"] = round(total / 1e6, 1)
-        except Exception:
-            pass
     _storage_cache[instance_id] = (now, result)
     return result
 

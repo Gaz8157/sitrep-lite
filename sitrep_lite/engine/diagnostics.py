@@ -6,12 +6,37 @@ from ..paths import SERVER_EXE, CONFIG_JSON, PROFILE_DIR, instance_server_exe, i
 from .config import read_config
 
 
+def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
+    ok = raw.get("ok", True)
+    severity = raw.get("severity")
+    if severity is None:
+        severity = "ok" if ok else "error"
+    fix_id = raw.get("fix_id")
+    fix = None
+    if fix_id:
+        fix = {"id": fix_id, "label": "Apply fix", "payload": None}
+    return {
+        "id": raw.get("id", ""),
+        "title": raw.get("label", raw.get("title", "")),
+        "severity": severity,
+        "detail": raw.get("message", raw.get("detail", "")),
+        "context": raw.get("context", []),
+        "fix": fix,
+    }
+
+
 def run_checks(*, instance_id: int | None = None) -> dict[str, Any]:
-    checks = []
-    checks.append(_check_binary(instance_id=instance_id))
-    checks.append(_check_config(instance_id=instance_id))
-    checks.append(_check_profile(instance_id=instance_id))
-    return {"checks": checks}
+    raw_checks = []
+    raw_checks.append(_check_binary(instance_id=instance_id))
+    raw_checks.append(_check_config(instance_id=instance_id))
+    raw_checks.append(_check_profile(instance_id=instance_id))
+    checks = [_normalize(c) for c in raw_checks]
+    summary = {"ok": 0, "info": 0, "warn": 0, "error": 0}
+    for c in checks:
+        sev = c["severity"]
+        if sev in summary:
+            summary[sev] += 1
+    return {"checks": checks, "summary": summary}
 
 
 def _check_binary(*, instance_id: int | None = None) -> dict[str, Any]:

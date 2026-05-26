@@ -67,7 +67,15 @@ def read_params() -> dict[str, Any]:
 
 def write_params(params: dict[str, Any], custom_launch_params: str = "") -> dict[str, Any]:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    data = {"params": params, "customLaunchParams": custom_launch_params}
+    # Merge incoming edits with existing saved params so untouched keys persist.
+    if _PARAMS_FILE.exists():
+        existing = json.loads(_PARAMS_FILE.read_text()).get("params", {})
+        if isinstance(existing, list):
+            existing = {}
+    else:
+        existing = {}
+    existing.update(params)
+    data = {"params": existing, "customLaunchParams": custom_launch_params}
     _PARAMS_FILE.write_text(json.dumps(data, indent=2))
     return read_params()
 
@@ -101,7 +109,7 @@ def build_launch_args(instance_id: int | None = None) -> list[str]:
         elif p["type"] in ("int", "enum"):
             if val is not None and val != 0:
                 args.append(f"-{key}={val}")
-    custom = data.get("customLaunchParams", "").strip()
+    custom = raw.get("customLaunchParams", "").strip()
     if custom:
         args.extend(custom.split())
     return args

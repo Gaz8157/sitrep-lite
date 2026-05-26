@@ -68,7 +68,7 @@ export default function Startup({ instance, toast, authUser }) {
     const iv = setInterval(load, 30000)
     return () => { cancelled = true; clearInterval(iv) }
   }, [id])
-  const hasDiagWarning = !!(diagQuick && (diagQuick.script_module_failed || diagQuick.mission_load_failed))
+  const hasDiagWarning = !!(diagQuick?.summary && (diagQuick.summary.error > 0 || diagQuick.summary.warn > 0))
 
   const save = async () => {
     if (id == null || saving) return
