@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 class ServerState(enum.Enum):
     STOPPED = "stopped"
     STARTING = "starting"
-    RUNNING = "running"
+    RUNNING = "active"
     STOPPING = "stopping"
 
 
@@ -26,6 +26,7 @@ class ServerLifecycle:
         self._process: subprocess.Popen | None = None
         self._state = ServerState.STOPPED
         self._start_time: float | None = None
+        self._log_file = None
 
     @property
     def state(self) -> ServerState:
@@ -44,6 +45,14 @@ class ServerLifecycle:
             return int(time.time() - self._start_time)
         return 0
 
+    def _close_log(self) -> None:
+        if self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
+
     def _poll(self) -> None:
         if self._process is None:
             self._state = ServerState.STOPPED
@@ -53,6 +62,7 @@ class ServerLifecycle:
             self._state = ServerState.STOPPED
             self._process = None
             self._start_time = None
+            self._close_log()
 
     def status(self) -> dict[str, Any]:
         self._poll()
@@ -86,14 +96,21 @@ class ServerLifecycle:
         if not exe.exists():
             raise RuntimeError("Server binary not installed. Run Install Server first.")
         prof.mkdir(parents=True, exist_ok=True)
+        log_dir = prof / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         args = [
             str(exe),
             f"-config={cfg}",
             f"-profile={prof}",
-            f"-logDir={prof / 'logs'}",
+            f"-logDir={log_dir}",
             "-maxFPS=60",
         ]
-        kwargs: dict[str, Any] = {"cwd": str(exe.parent)}
+        self._log_file = open(log_dir / "console.log", "a", encoding="utf-8", errors="replace")
+        kwargs: dict[str, Any] = {
+            "cwd": str(exe.parent),
+            "stdout": self._log_file,
+            "stderr": self._log_file,
+        }
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         self._process = subprocess.Popen(args, **kwargs)
