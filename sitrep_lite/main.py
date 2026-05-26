@@ -185,23 +185,33 @@ def storage_info(instance_id: int) -> dict:
         disk = type("D", (), {"total": 0, "free": 0})()
 
     mod_count = 0
+    mod_guids = set()
     config_path = idir / "config.json"
     if config_path.is_file():
         try:
             cfg = _json.loads(config_path.read_text(encoding="utf-8"))
-            mod_count = len(cfg.get("game", {}).get("mods", []))
+            mod_list = cfg.get("game", {}).get("mods", [])
+            mod_count = len(mod_list)
+            mod_guids = {m.get("modId", "").upper() for m in mod_list if m.get("modId")}
         except Exception:
             pass
 
-    addons_size = _dir_size(sdir / "addons") + _dir_size(prof / "addons")
-    logs_size = _dir_size(prof / "logs")
-    profile_size = _dir_size(prof) - logs_size
+    addons_dir = prof / "addons"
+    active_mods_size = 0
+    if addons_dir.is_dir() and mod_guids:
+        for sub in addons_dir.iterdir():
+            if sub.is_dir() and sub.name.upper() in mod_guids:
+                active_mods_size += _dir_size(sub)
 
-    total = addons_size + logs_size + profile_size
+    total_addons_size = _dir_size(sdir / "addons") + _dir_size(addons_dir)
+    logs_size = _dir_size(prof / "logs")
+    profile_size = _dir_size(prof) - logs_size - _dir_size(addons_dir)
+
+    total = total_addons_size + logs_size + profile_size
 
     breakdown = {
-        "active_mods": {"size_mb": 0, "label": f"{mod_count} active mods" if mod_count else "No active mods"},
-        "addons": {"size_mb": round(addons_size / 1e6, 1), "label": "Addons folder"},
+        "active_mods": {"size_mb": round(active_mods_size / 1e6, 1), "label": f"{mod_count} active mods" if mod_count else "No active mods"},
+        "addons": {"size_mb": round(total_addons_size / 1e6, 1), "label": "Addons folder"},
         "logs": {"size_mb": round(logs_size / 1e6, 1), "label": "Logs"},
         "profile": {"size_mb": round(profile_size / 1e6, 1), "label": "Profile"},
     }
@@ -311,8 +321,6 @@ else:
 def run() -> None:
     import uvicorn
     print("Starting SITREP Lite on http://localhost:8000")
-    if sys.platform == "win32":
-        webbrowser.open("http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 

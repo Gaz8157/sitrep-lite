@@ -98,13 +98,9 @@ class ServerLifecycle:
         prof.mkdir(parents=True, exist_ok=True)
         log_dir = prof / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        args = [
-            str(exe),
-            f"-config={cfg}",
-            f"-profile={prof}",
-            f"-logDir={log_dir}",
-            "-maxFPS=60",
-        ]
+        from .startup_params import build_launch_args
+        launch_args = build_launch_args(instance_id=self._instance_id)
+        args = [str(exe)] + launch_args
         self._log_file = open(log_dir / "console.log", "a", encoding="utf-8", errors="replace")
         kwargs: dict[str, Any] = {
             "cwd": str(exe.parent),
