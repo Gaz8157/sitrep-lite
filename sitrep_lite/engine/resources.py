@@ -15,13 +15,13 @@ CPU_AFFINITY_FILE = DATA_DIR / "cpu_affinity.json"
 MEMORY_SETTINGS_FILE = DATA_DIR / "memory_settings.json"
 
 _DEFAULT_MEMORY = {
-    "budget_mb": 12288,
-    "headroom_mb": 4096,
-    "ceiling_mb": 36864,
+    "budget_mb": 0,
+    "headroom_mb": 0,
+    "ceiling_mb": 0,
     "preset": "production",
-    "watcher_enabled": True,
-    "auto_raise": True,
-    "oom_adj": -200,
+    "watcher_enabled": False,
+    "auto_raise": False,
+    "oom_adj": 0,
 }
 
 
@@ -184,21 +184,28 @@ def reset_memory_settings(instance_id: int) -> dict[str, Any]:
 
 def get_memory_live(instance_id: int, pid: int | None) -> dict[str, Any]:
     settings = _load_memory_settings()
-    budget = settings.get("budget_mb", 12288)
-    ceiling = settings.get("ceiling_mb", 36864)
+    budget = settings.get("budget_mb", 0)
+    ceiling = settings.get("ceiling_mb", 0)
+    vm = psutil.virtual_memory()
+    total_mb = round(vm.total / (1024 * 1024))
+    rss_bytes = 0
     rss_mb = 0.0
     if pid:
         try:
             p = psutil.Process(pid)
-            rss_mb = round(p.memory_info().rss / (1024 * 1024), 1)
+            rss_bytes = p.memory_info().rss
+            rss_mb = round(rss_bytes / (1024 * 1024), 1)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-    pct = round(rss_mb / budget * 100, 1) if budget > 0 else 0.0
+    effective_budget = budget if budget > 0 else total_mb
+    pct = round(rss_mb / effective_budget * 100, 1) if effective_budget > 0 else 0.0
     return {
+        "rss_bytes": rss_bytes,
         "rss_mb": rss_mb,
-        "budget_mb": budget,
-        "ceiling_mb": ceiling,
+        "budget_mb": budget if budget > 0 else total_mb,
+        "ceiling_mb": ceiling if ceiling > 0 else total_mb,
         "pct": pct,
+        "total_mb": total_mb,
     }
 
 
