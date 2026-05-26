@@ -199,11 +199,17 @@ def get_memory_live(instance_id: int, pid: int | None) -> dict[str, Any]:
             pass
     effective_budget = budget if budget > 0 else total_mb
     pct = round(rss_mb / effective_budget * 100, 1) if effective_budget > 0 else 0.0
+    eff_budget = budget if budget > 0 else total_mb
+    eff_ceiling = ceiling if ceiling > 0 else total_mb
     return {
+        "live": {
+            "rss_bytes": rss_bytes,
+            "online": pid is not None,
+        },
         "rss_bytes": rss_bytes,
         "rss_mb": rss_mb,
-        "budget_mb": budget if budget > 0 else total_mb,
-        "ceiling_mb": ceiling if ceiling > 0 else total_mb,
+        "budget_mb": eff_budget,
+        "ceiling_mb": eff_ceiling,
         "pct": pct,
         "total_mb": total_mb,
     }
