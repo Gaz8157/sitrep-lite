@@ -107,31 +107,26 @@ def storage_info(instance_id: int) -> dict:
     except Exception:
         disk = type("D", (), {"total": 0, "free": 0})()
 
-    # Mods: count from config, size from server workshop dir
     mod_count = 0
-    mods_size = 0
     config_path = idir / "config.json"
     if config_path.is_file():
         try:
             cfg = _json.loads(config_path.read_text(encoding="utf-8"))
-            mod_list = cfg.get("game", {}).get("mods", [])
-            mod_count = len(mod_list)
+            mod_count = len(cfg.get("game", {}).get("mods", []))
         except Exception:
             pass
 
+    addons_size = _dir_size(sdir / "addons") + _dir_size(prof / "addons")
     logs_size = _dir_size(prof / "logs")
-    saves_size = _dir_size(prof / ".save")
-    server_size = _dir_size(sdir)
+    profile_size = _dir_size(prof) - logs_size
 
-    total = mods_size + logs_size + saves_size + server_size
-
-    mod_label = f"{mod_count} mods loaded" if mod_count else "No mods"
+    total = addons_size + logs_size + profile_size
 
     breakdown = {
-        "mods": {"size_mb": round(mods_size / 1e6, 1), "label": mod_label},
+        "active_mods": {"size_mb": 0, "label": f"{mod_count} active mods" if mod_count else "No active mods"},
+        "addons": {"size_mb": round(addons_size / 1e6, 1), "label": "Addons folder"},
         "logs": {"size_mb": round(logs_size / 1e6, 1), "label": "Logs"},
-        "saves": {"size_mb": round(saves_size / 1e6, 1), "label": "Saves"},
-        "server": {"size_mb": round(server_size / 1e6, 1), "label": "Server install"},
+        "profile": {"size_mb": round(profile_size / 1e6, 1), "label": "Profile"},
     }
 
     result = {
