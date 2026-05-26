@@ -1,4 +1,4 @@
-name: Build Windows Release
+name: Build Release
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -19,36 +19,28 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Python deps
-        run: |
-          pip install uv
-          uv venv
-          uv pip install -e ".[build]"
-
       - name: Build frontend
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci && npm run build
 
-      - name: Build exe with PyInstaller
+      - name: Package release zip
         run: |
-          uv run pyinstaller build/sitrep-lite.spec --distpath build/out --workpath build/tmp --clean
-
-      - name: Create zip
-        run: |
-          cd build/out
-          Compress-Archive -Path SitrepLite -DestinationPath ../SitrepLite-${{ github.ref_name || 'dev' }}.zip
+          mkdir -p release/SitrepLite/frontend
+          cp -r sitrep_lite release/SitrepLite/
+          cp -r frontend/dist release/SitrepLite/frontend/
+          cp pyproject.toml release/SitrepLite/
+          cp build/run.bat release/SitrepLite/
+          cd release && zip -r ../SitrepLite-${{ github.ref_name || 'dev' }}.zip SitrepLite/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: SitrepLite
-          path: build/SitrepLite-*.zip
+          path: SitrepLite-*.zip
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/SitrepLite-*.zip
+          files: SitrepLite-*.zip
           generate_release_notes: true
