@@ -7,15 +7,21 @@ import socket
 import struct
 from typing import Any
 
-from ..paths import CONFIG_JSON, SECRETS_FILE
+from ..paths import CONFIG_JSON, SECRETS_FILE, instance_config
 
 RCON_HOST = "127.0.0.1"
 RCON_TIMEOUT = 5.0
 
 
-def _get_rcon_port() -> int:
+def _cfg_path(instance_id: int | None = None):
+    if instance_id is not None:
+        return instance_config(instance_id)
+    return CONFIG_JSON
+
+
+def _get_rcon_port(instance_id: int | None = None) -> int:
     try:
-        cfg = json.loads(CONFIG_JSON.read_text())
+        cfg = json.loads(_cfg_path(instance_id).read_text())
         port = cfg.get("rcon", {}).get("port")
         if isinstance(port, int) and 1 <= port <= 65535:
             return port
@@ -24,9 +30,9 @@ def _get_rcon_port() -> int:
     return 19999
 
 
-def _get_rcon_password() -> str:
+def _get_rcon_password(instance_id: int | None = None) -> str:
     try:
-        cfg = json.loads(CONFIG_JSON.read_text())
+        cfg = json.loads(_cfg_path(instance_id).read_text())
         pw = cfg.get("rcon", {}).get("password")
         if isinstance(pw, str) and pw:
             return pw
@@ -75,10 +81,11 @@ def _parse_packet(packet: bytes) -> tuple[int, int, bytes] | None:
 
 async def rcon_call(command: str, *, host: str | None = None,
                     port: int | None = None, password: str | None = None,
-                    timeout: float = RCON_TIMEOUT) -> str:
+                    timeout: float = RCON_TIMEOUT,
+                    instance_id: int | None = None) -> str:
     host = host or RCON_HOST
-    port = port or _get_rcon_port()
-    password = password or _get_rcon_password()
+    port = port or _get_rcon_port(instance_id)
+    password = password or _get_rcon_password(instance_id)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)

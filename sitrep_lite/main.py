@@ -14,14 +14,12 @@ from starlette.responses import FileResponse, HTMLResponse
 
 from .db.panel import migrate as panel_migrate
 from .db.state import migrate as state_migrate
-from .engine.server_engine import ServerEngine
 from .paths import FRONTEND_DIST, ensure_dirs
 from .routers import auth, audit, scheduler, server, settings, system, users, webhooks, workshop
 
 log = logging.getLogger(__name__)
 
 _BOOT_TS = time.time()
-_engine: ServerEngine | None = None
 
 
 class SPAStaticFiles(StaticFiles):
@@ -42,22 +40,15 @@ class SPAStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine
     ensure_dirs()
     panel_migrate()
     state_migrate()
-    from .engine.config import ensure_default_config
-    from .services.settings import _load_or_create_secrets
-    secrets = _load_or_create_secrets()
-    ensure_default_config(secrets.get("rcon_password", ""))
-    _engine = ServerEngine()
-    server.set_engine(_engine)
+    from .engine.instance_manager import ensure_default_instance, stop_all
+    ensure_default_instance()
     workshop.start_index_build_if_needed()
     yield
-    if _engine and _engine.lifecycle.pid:
-        log.info("Shutting down — stopping server process")
-        _engine.lifecycle.stop()
-    _engine = None
+    log.info("Shutting down -- stopping all server instances")
+    stop_all()
 
 
 app = FastAPI(title="SITREP Lite", version="1.0.0", lifespan=lifespan)
@@ -109,7 +100,9 @@ def memory_settings_reset(instance_id: int) -> dict:
 @app.get("/api/servers/{instance_id}/memory/live")
 def memory_live(instance_id: int) -> dict:
     from .engine.resources import get_memory_live
-    pid = _engine.lifecycle.pid if _engine else None
+    from .engine.instance_manager import get_engine
+    engine = get_engine(instance_id)
+    pid = engine.lifecycle.pid
     return get_memory_live(instance_id, pid)
 
 
@@ -128,7 +121,9 @@ def cpu_affinity_get(instance_id: int) -> dict:
 @app.put("/api/servers/{instance_id}/cpu-affinity")
 def cpu_affinity_put(instance_id: int, payload: dict) -> dict:
     from .engine.resources import set_cpu_affinity
-    pid = _engine.lifecycle.pid if _engine else None
+    from .engine.instance_manager import get_engine
+    engine = get_engine(instance_id)
+    pid = engine.lifecycle.pid
     return set_cpu_affinity(instance_id, payload, pid)
 
 

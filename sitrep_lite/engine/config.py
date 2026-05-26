@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
-from ..paths import CONFIG_JSON
+from ..paths import CONFIG_JSON, instance_config
 
 
 def _deep_merge(dst: dict, src: dict) -> dict:
@@ -15,22 +16,33 @@ def _deep_merge(dst: dict, src: dict) -> dict:
     return dst
 
 
-def read_config() -> dict[str, Any]:
-    if not CONFIG_JSON.exists():
+def _resolve_cfg(config_path: Path | None = None, instance_id: int | None = None) -> Path:
+    if config_path is not None:
+        return config_path
+    if instance_id is not None:
+        return instance_config(instance_id)
+    return CONFIG_JSON
+
+
+def read_config(config_path: Path | None = None, *, instance_id: int | None = None) -> dict[str, Any]:
+    p = _resolve_cfg(config_path, instance_id)
+    if not p.exists():
         return {}
-    return json.loads(CONFIG_JSON.read_text())
+    return json.loads(p.read_text())
 
 
-def write_config(config: dict[str, Any]) -> None:
-    tmp = CONFIG_JSON.with_suffix(".tmp")
+def write_config(config: dict[str, Any], config_path: Path | None = None, *, instance_id: int | None = None) -> None:
+    p = _resolve_cfg(config_path, instance_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(config, indent=2) + "\n")
-    tmp.replace(CONFIG_JSON)
+    tmp.replace(p)
 
 
-def patch_config(patch: dict[str, Any]) -> dict[str, Any]:
-    current = read_config()
+def patch_config(patch: dict[str, Any], config_path: Path | None = None, *, instance_id: int | None = None) -> dict[str, Any]:
+    current = read_config(config_path, instance_id=instance_id)
     _deep_merge(current, patch)
-    write_config(current)
+    write_config(current, config_path, instance_id=instance_id)
     return current
 
 
@@ -54,10 +66,8 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     return errors
 
 
-def ensure_default_config(rcon_password: str) -> dict[str, Any]:
-    if CONFIG_JSON.exists():
-        return read_config()
-    config = {
+def _default_config_dict(rcon_password: str) -> dict[str, Any]:
+    return {
         "bindAddress": "0.0.0.0",
         "bindPort": 2001,
         "publicAddress": "",
@@ -90,5 +100,23 @@ def ensure_default_config(rcon_password: str) -> dict[str, Any]:
         },
         "operating": {"lobbyPlayerSynchronise": True},
     }
+
+
+def ensure_default_config(rcon_password: str) -> dict[str, Any]:
+    if CONFIG_JSON.exists():
+        return read_config()
+    config = _default_config_dict(rcon_password)
     write_config(config)
+    return config
+
+
+def ensure_default_config_for(instance_id: int, rcon_password: str) -> dict[str, Any]:
+    cfg_path = instance_config(instance_id)
+    if cfg_path.exists():
+        return json.loads(cfg_path.read_text())
+    config = _default_config_dict(rcon_password)
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cfg_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2) + "\n")
+    tmp.replace(cfg_path)
     return config

@@ -4,18 +4,25 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..paths import PROFILE_DIR
+from ..paths import PROFILE_DIR, instance_profile
 
 
-def _safe_path(rel_path: str) -> Path:
-    resolved = (PROFILE_DIR / rel_path).resolve()
-    if not str(resolved).startswith(str(PROFILE_DIR.resolve())):
+def _profile_root(instance_id: int | None = None) -> Path:
+    if instance_id is not None:
+        return instance_profile(instance_id)
+    return PROFILE_DIR
+
+
+def _safe_path(rel_path: str, instance_id: int | None = None) -> Path:
+    root = _profile_root(instance_id)
+    resolved = (root / rel_path).resolve()
+    if not str(resolved).startswith(str(root.resolve())):
         raise ValueError(f"Path {rel_path!r} resolves outside profile directory")
     return resolved
 
 
-def list_files(rel_path: str = "") -> dict[str, Any]:
-    target = _safe_path(rel_path)
+def list_files(rel_path: str = "", *, instance_id: int | None = None) -> dict[str, Any]:
+    target = _safe_path(rel_path, instance_id)
     if not target.exists():
         return {"path": rel_path, "entries": []}
     entries = []
@@ -30,23 +37,23 @@ def list_files(rel_path: str = "") -> dict[str, Any]:
     return {"path": rel_path, "entries": entries}
 
 
-def read_file(rel_path: str) -> dict[str, Any]:
-    target = _safe_path(rel_path)
+def read_file(rel_path: str, *, instance_id: int | None = None) -> dict[str, Any]:
+    target = _safe_path(rel_path, instance_id)
     if not target.is_file():
         raise FileNotFoundError(f"{rel_path} not found")
     content = target.read_text(errors="replace")
     return {"path": rel_path, "content": content, "size": target.stat().st_size}
 
 
-def write_file(rel_path: str, content: str) -> dict[str, Any]:
-    target = _safe_path(rel_path)
+def write_file(rel_path: str, content: str, *, instance_id: int | None = None) -> dict[str, Any]:
+    target = _safe_path(rel_path, instance_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content)
     return {"path": rel_path, "size": target.stat().st_size}
 
 
-def delete_file(rel_path: str) -> dict[str, Any]:
-    target = _safe_path(rel_path)
+def delete_file(rel_path: str, *, instance_id: int | None = None) -> dict[str, Any]:
+    target = _safe_path(rel_path, instance_id)
     if target.is_dir():
         import shutil
         shutil.rmtree(target)
@@ -57,7 +64,7 @@ def delete_file(rel_path: str) -> dict[str, Any]:
     return {"path": rel_path, "deleted": True}
 
 
-def mkdir(rel_path: str) -> dict[str, Any]:
-    target = _safe_path(rel_path)
+def mkdir(rel_path: str, *, instance_id: int | None = None) -> dict[str, Any]:
+    target = _safe_path(rel_path, instance_id)
     target.mkdir(parents=True, exist_ok=True)
     return {"path": rel_path, "created": True}

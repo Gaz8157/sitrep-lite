@@ -6,8 +6,9 @@ from .lifecycle import ServerLifecycle
 
 
 class ServerEngine:
-    def __init__(self) -> None:
-        self.lifecycle = ServerLifecycle()
+    def __init__(self, instance_id: int = 1) -> None:
+        self.instance_id = instance_id
+        self.lifecycle = ServerLifecycle(instance_id)
 
     async def lifecycle_status(self) -> dict[str, Any]:
         return self.lifecycle.status()

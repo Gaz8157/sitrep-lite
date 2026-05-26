@@ -8,7 +8,7 @@ import sys
 import time
 from typing import Any
 
-from ..paths import SERVER_EXE, CONFIG_JSON, PROFILE_DIR
+from ..paths import SERVER_EXE, CONFIG_JSON, PROFILE_DIR, instance_server_exe, instance_config, instance_profile
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +21,8 @@ class ServerState(enum.Enum):
 
 
 class ServerLifecycle:
-    def __init__(self) -> None:
+    def __init__(self, instance_id: int = 1) -> None:
+        self._instance_id = instance_id
         self._process: subprocess.Popen | None = None
         self._state = ServerState.STOPPED
         self._start_time: float | None = None
@@ -55,16 +56,17 @@ class ServerLifecycle:
 
     def status(self) -> dict[str, Any]:
         self._poll()
+        exe = instance_server_exe(self._instance_id)
         result: dict[str, Any] = {
-            "instance_id": 1,
+            "instance_id": self._instance_id,
             "state": self._state.value,
             "pid": self.pid,
             "uptime_sec": self.uptime_sec,
-            "binary_installed": SERVER_EXE.exists(),
+            "binary_installed": exe.exists(),
         }
         if self._state == ServerState.RUNNING:
             from .config import read_config
-            cfg = read_config()
+            cfg = read_config(instance_id=self._instance_id)
             game = cfg.get("game", {})
             result["max_players"] = game.get("maxPlayers")
             result["name"] = game.get("name", "")
@@ -78,14 +80,17 @@ class ServerLifecycle:
         self._poll()
         if self._state == ServerState.RUNNING:
             return {"state": "already_running", "pid": self.pid}
-        if not SERVER_EXE.exists():
+        exe = instance_server_exe(self._instance_id)
+        cfg = instance_config(self._instance_id)
+        prof = instance_profile(self._instance_id)
+        if not exe.exists():
             raise RuntimeError("Server binary not installed. Run Install Server first.")
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        prof.mkdir(parents=True, exist_ok=True)
         args = [
-            str(SERVER_EXE),
-            f"-config={CONFIG_JSON}",
-            f"-profile={PROFILE_DIR}",
-            f"-logDir={PROFILE_DIR / 'logs'}",
+            str(exe),
+            f"-config={cfg}",
+            f"-profile={prof}",
+            f"-logDir={prof / 'logs'}",
             "-maxFPS=60",
         ]
         kwargs: dict[str, Any] = {}

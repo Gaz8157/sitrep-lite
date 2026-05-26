@@ -16,51 +16,61 @@ _OP_ROLES = ("owner", "head_admin", "admin", "moderator")
 _ADMIN_ROLES = ("owner", "head_admin", "admin")
 _OWNER_ONLY = ("owner",)
 
-_engine = None
-
-def set_engine(engine) -> None:
-    global _engine
-    _engine = engine
-
-def _get_engine():
-    if _engine is None:
-        raise HTTPException(status_code=503, detail="Engine not initialized")
-    return _engine
+def _get_engine(instance_id: int):
+    from ..engine.instance_manager import get_engine
+    return get_engine(instance_id)
 
 
 @router.get("")
 async def list_servers(user=Depends(require_role(*_READ_ROLES))) -> dict:
-    engine = _get_engine()
-    st = engine.lifecycle.status()
-    inst = {"id": 1, "instance_id": 1, **st}
-    return {"instances": [inst]}
+    from ..engine.instance_manager import list_instances
+    return {"instances": list_instances()}
+
+
+@router.post("")
+async def create_server(payload: dict, user=Depends(require_role(*_OWNER_ONLY))) -> dict:
+    from ..engine.instance_manager import create_instance
+    return create_instance(payload.get("name", ""))
+
+
+@router.delete("/{instance_id}")
+async def delete_server(instance_id: int, user=Depends(require_server_role(*_OWNER_ONLY))) -> dict:
+    from ..engine.instance_manager import delete_instance
+    return delete_instance(instance_id)
+
+
+@router.put("/{instance_id}/name")
+async def rename_server(instance_id: int, payload: dict, user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
+    from ..engine.instance_manager import rename_instance
+    return rename_instance(instance_id, payload.get("name", ""))
 
 
 @router.get("/{instance_id}/status")
 async def server_status(instance_id: int, user=Depends(require_server_role(*_READ_ROLES))) -> dict:
-    return _get_engine().lifecycle.status()
+    return _get_engine(instance_id).lifecycle.status()
 
 
 @router.post("/{instance_id}/start")
 async def start_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
-    from ..paths import SERVER_EXE
+    from ..paths import instance_server_exe
     from ..engine.steamcmd import install_server, install_status
-    if not SERVER_EXE.exists():
+    exe = instance_server_exe(instance_id)
+    if not exe.exists():
         status = install_status()
         if status.get("status") == "installing":
             return {"state": "installing", "message": "Server is being installed. Check Console for progress."}
-        await install_server()
+        await install_server(instance_id=instance_id)
         return {"state": "installing", "message": "Installing server via SteamCMD. Check Console for progress."}
-    return _get_engine().lifecycle.start()
+    return _get_engine(instance_id).lifecycle.start()
 
 
 @router.post("/{instance_id}/update")
 async def update_server(instance_id: int, user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
-    from ..engine.steamcmd import update_server
-    engine = _get_engine()
+    from ..engine.steamcmd import update_server as do_update
+    engine = _get_engine(instance_id)
     if engine.lifecycle.pid:
         engine.lifecycle.stop()
-    await update_server()
+    await do_update(instance_id=instance_id)
     return {"state": "updating", "message": "Updating server via SteamCMD. Check Console for progress."}
 
 
@@ -72,32 +82,32 @@ async def get_install_status(instance_id: int, user=Depends(require_server_role(
 
 @router.post("/{instance_id}/stop")
 async def stop_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
-    return _get_engine().lifecycle.stop()
+    return _get_engine(instance_id).lifecycle.stop()
 
 
 @router.post("/{instance_id}/restart")
 async def restart_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
-    return _get_engine().lifecycle.restart()
+    return _get_engine(instance_id).lifecycle.restart()
 
 
 @router.post("/{instance_id}/install")
 async def install_server(instance_id: int, force: bool = False,
                          user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.steamcmd import install_server as do_install
-    return await do_install(force=force)
+    return await do_install(force=force, instance_id=instance_id)
 
 
 @router.get("/{instance_id}/config")
 async def get_config(instance_id: int, user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.config import read_config
-    return {"config": read_config()}
+    return {"config": read_config(instance_id=instance_id)}
 
 
 @router.put("/{instance_id}/config")
 async def put_config(instance_id: int, payload: dict,
                      user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.config import write_config
-    write_config(payload)
+    write_config(payload, instance_id=instance_id)
     return {"config": payload}
 
 
@@ -105,7 +115,7 @@ async def put_config(instance_id: int, payload: dict,
 async def patch_config(instance_id: int, payload: dict,
                        user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.config import patch_config as do_patch
-    result = do_patch(payload)
+    result = do_patch(payload, instance_id=instance_id)
     return {"config": result}
 
 
@@ -133,7 +143,7 @@ async def put_startup_params(instance_id: int, payload: dict,
 @router.get("/{instance_id}/mods")
 async def get_mods(instance_id: int, user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.mods import list_mods
-    return list_mods()
+    return list_mods(instance_id=instance_id)
 
 
 @router.post("/{instance_id}/mods")
@@ -141,21 +151,21 @@ async def post_mod(instance_id: int, payload: dict,
                    user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.mods import add_mod
     guid = payload.get("mod_guid", "")
-    return add_mod(guid)
+    return add_mod(guid, instance_id=instance_id)
 
 
 @router.delete("/{instance_id}/mods/{mod_guid}")
 async def delete_mod(instance_id: int, mod_guid: str,
                      user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.mods import remove_mod
-    return remove_mod(mod_guid)
+    return remove_mod(mod_guid, instance_id=instance_id)
 
 
 @router.delete("/{instance_id}/mods")
 async def delete_all_mods(instance_id: int,
                           user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.mods import clear_mods
-    return clear_mods()
+    return clear_mods(instance_id=instance_id)
 
 
 @router.post("/{instance_id}/mods/{mod_guid}/subscribe")
@@ -169,102 +179,102 @@ async def subscribe_mod(instance_id: int, mod_guid: str,
 async def list_files(instance_id: int, path: str = "",
                      user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.files import list_files as do_list
-    return do_list(path)
+    return do_list(path, instance_id=instance_id)
 
 
 @router.get("/{instance_id}/files/content")
 async def get_file_content(instance_id: int, path: str,
                            user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.files import read_file
-    return read_file(path)
+    return read_file(path, instance_id=instance_id)
 
 
 @router.put("/{instance_id}/files")
 async def put_file(instance_id: int, payload: dict, path: str,
                    user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.files import write_file
-    return write_file(path, payload.get("content", ""))
+    return write_file(path, payload.get("content", ""), instance_id=instance_id)
 
 
 @router.delete("/{instance_id}/files")
 async def delete_file(instance_id: int, path: str,
                       user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.files import delete_file as do_delete
-    return do_delete(path)
+    return do_delete(path, instance_id=instance_id)
 
 
 @router.post("/{instance_id}/files/mkdir")
 async def post_file_mkdir(instance_id: int, payload: dict,
                           user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.files import mkdir
-    return mkdir(payload.get("rel_path", ""))
+    return mkdir(payload.get("rel_path", ""), instance_id=instance_id)
 
 
 @router.get("/{instance_id}/saves")
 async def list_saves(instance_id: int, user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.saves import list_saves as do_list
-    return do_list()
+    return do_list(instance_id=instance_id)
 
 
 @router.get("/{instance_id}/saves/inspect")
 async def inspect_save(instance_id: int, path: str,
                        user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.saves import inspect_save as do_inspect
-    return do_inspect(path)
+    return do_inspect(path, instance_id=instance_id)
 
 
 @router.delete("/{instance_id}/saves")
 async def purge_saves(instance_id: int, path: str | None = None,
                       user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.saves import purge_save
-    return purge_save(path)
+    return purge_save(path, instance_id=instance_id)
 
 
 @router.get("/{instance_id}/backups")
 async def list_backups(instance_id: int, user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.saves import list_backups as do_list
-    return do_list()
+    return do_list(instance_id=instance_id)
 
 
 @router.post("/{instance_id}/backups")
 async def create_backup(instance_id: int, user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.saves import create_backup as do_create
-    return do_create()
+    return do_create(instance_id=instance_id)
 
 
 @router.delete("/{instance_id}/backups/{filename}")
 async def delete_backup(instance_id: int, filename: str,
                         user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.saves import delete_backup as do_delete
-    return do_delete(filename)
+    return do_delete(filename, instance_id=instance_id)
 
 
 @router.post("/{instance_id}/backups/{filename}/restore")
 async def restore_backup(instance_id: int, filename: str,
                          user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.saves import restore_backup as do_restore
-    return do_restore(filename)
+    return do_restore(filename, instance_id=instance_id)
 
 
 @router.get("/{instance_id}/logs")
 async def get_logs(instance_id: int, lines: int = 100,
                    user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.logs import tail_logs
-    return tail_logs(lines)
+    return tail_logs(lines, instance_id=instance_id)
 
 
 @router.get("/{instance_id}/diagnostics")
 async def get_diagnostics(instance_id: int,
                           user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.diagnostics import run_checks
-    return run_checks()
+    return run_checks(instance_id=instance_id)
 
 
 @router.post("/{instance_id}/diagnostics/fix")
 async def apply_diagnostics_fix(instance_id: int, payload: dict,
                                 user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.diagnostics import apply_fix
-    return apply_fix(payload.get("fix_id", ""), payload.get("payload"))
+    return apply_fix(payload.get("fix_id", ""), payload.get("payload"), instance_id=instance_id)
 
 
 @router.post("/{instance_id}/rcon")
@@ -272,7 +282,7 @@ async def send_rcon(instance_id: int, payload: dict,
                     user=Depends(require_server_role(*_OP_ROLES))) -> dict:
     from ..engine.rcon import rcon_call
     cmd = payload.get("command", "")
-    output = await rcon_call(cmd)
+    output = await rcon_call(cmd, instance_id=instance_id)
     return {"command": cmd, "output": output}
 
 
@@ -281,7 +291,7 @@ async def say_rcon(instance_id: int, payload: dict,
                    user=Depends(require_server_role(*_OP_ROLES))) -> dict:
     from ..engine.rcon import rcon_call
     msg = payload.get("message", "")
-    output = await rcon_call(f"#say {msg}")
+    output = await rcon_call(f"#say {msg}", instance_id=instance_id)
     return {"message": msg, "output": output}
 
 
@@ -289,16 +299,16 @@ async def say_rcon(instance_id: int, payload: dict,
 async def list_players(instance_id: int,
                        user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.players import list_players as do_list
-    return await do_list()
+    return await do_list(instance_id=instance_id)
 
 
 @router.get("/{instance_id}/admins")
 async def list_admins(instance_id: int,
                       user=Depends(require_server_role(*_READ_ROLES))) -> dict:
     from ..engine.config import read_config
-    cfg = read_config()
+    cfg = read_config(instance_id=instance_id)
     admins = (cfg.get("game", {}) or {}).get("admins", []) or []
-    return {"instance_id": 1, "admins": list(admins)}
+    return {"instance_id": instance_id, "admins": list(admins)}
 
 
 @router.post("/{instance_id}/admins")
@@ -308,26 +318,26 @@ async def add_admin(instance_id: int, payload: dict,
     guid = (payload or {}).get("guid", "").strip()
     if not guid:
         raise HTTPException(status_code=400, detail="'guid' required")
-    cfg = read_config()
+    cfg = read_config(instance_id=instance_id)
     game = cfg.setdefault("game", {})
     admins = list(game.get("admins", []) or [])
     if guid not in admins:
         admins.append(guid)
     game["admins"] = admins
-    write_config(cfg)
-    return {"instance_id": 1, "admins": admins, "state": "added"}
+    write_config(cfg, instance_id=instance_id)
+    return {"instance_id": instance_id, "admins": admins, "state": "added"}
 
 
 @router.delete("/{instance_id}/admins/{guid}")
 async def remove_admin(instance_id: int, guid: str,
                        user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
     from ..engine.config import read_config, write_config
-    cfg = read_config()
+    cfg = read_config(instance_id=instance_id)
     game = cfg.setdefault("game", {})
     admins = [a for a in (game.get("admins", []) or []) if a != guid]
     game["admins"] = admins
-    write_config(cfg)
-    return {"instance_id": 1, "admins": admins, "state": "removed"}
+    write_config(cfg, instance_id=instance_id)
+    return {"instance_id": instance_id, "admins": admins, "state": "removed"}
 
 
 @router.get("/{instance_id}/bans")
@@ -363,7 +373,7 @@ async def remove_ban(instance_id: int, identity: str,
 @router.get("/{instance_id}/process-stats")
 async def get_process_stats(instance_id: int,
                             user=Depends(require_server_role(*_READ_ROLES))) -> dict:
-    engine = _get_engine()
+    engine = _get_engine(instance_id)
     pid = engine.lifecycle.pid
     total_cpus = psutil.cpu_count(logical=True) or 1
     empty = {"running": False, "cpu_percent": None, "rss_mb": None,

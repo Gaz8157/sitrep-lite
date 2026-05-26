@@ -25,7 +25,29 @@ SERVER_EXE = SERVER_DIR / "ArmaReforgerServer.exe"
 REFORGER_APP_ID = 1874900
 REFORGER_WORKSHOP_APP_ID = 1874880
 
+INSTANCES_DIR = BASE_DIR / "instances"
+
+
+def instance_dir(instance_id: int) -> Path:
+    return INSTANCES_DIR / str(instance_id)
+
+
+def instance_config(instance_id: int) -> Path:
+    return instance_dir(instance_id) / "config.json"
+
+
+def instance_profile(instance_id: int) -> Path:
+    return instance_dir(instance_id) / "profile"
+
+
+def instance_server(instance_id: int) -> Path:
+    return instance_dir(instance_id) / "server"
+
+
+def instance_server_exe(instance_id: int) -> Path:
+    return instance_server(instance_id) / "ArmaReforgerServer.exe"
+
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, BACKUPS_DIR, SERVER_DIR, PROFILE_DIR, STEAMCMD_DIR):
+    for d in (DATA_DIR, BACKUPS_DIR, SERVER_DIR, PROFILE_DIR, STEAMCMD_DIR, INSTANCES_DIR):
         d.mkdir(parents=True, exist_ok=True)

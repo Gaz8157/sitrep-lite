@@ -5,9 +5,9 @@ from typing import Any
 from .rcon import rcon_call
 
 
-async def list_players() -> dict[str, Any]:
+async def list_players(*, instance_id: int | None = None) -> dict[str, Any]:
     try:
-        output = await rcon_call("#players")
+        output = await rcon_call("#players", instance_id=instance_id)
     except Exception:
         return {"players": [], "count": 0, "error": "RCON unavailable"}
     players = []

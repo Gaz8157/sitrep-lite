@@ -3,6 +3,7 @@ import { Ctx } from "./ctx.jsx"
 import { THEMES, TEXT_SIZES, TABS, ROLE_TABS } from "./constants.js"
 import { useToast, useMobile } from "./hooks/index.js"
 import { Toasts } from "./components/index.js"
+import { apiGet } from "./api/index.js"
 import { AuthProvider, useAuth } from "./auth/useAuth.jsx"
 import LoginPage from "./auth/LoginPage.jsx"
 
@@ -21,6 +22,7 @@ const Clock = memo(function Clock({ color, fontSize }) {
     </span>
   )
 })
+import ServerPicker from "./tabs/serverpicker/index.js"
 import Dashboard from "./tabs/dashboard/index.js"
 import Console from "./tabs/console/index.js"
 import Startup from "./tabs/startup/index.js"
@@ -34,6 +36,8 @@ import Webhooks from "./tabs/webhooks/index.js"
 import Scheduler from "./tabs/scheduler/index.js"
 
 import UserChip from "./auth/UserChip.jsx"
+
+const SELECTED_INSTANCE_KEY = "sitrep-selected-instance"
 
 function TabPlaceholder({ tabId }) {
   return (
@@ -56,16 +60,6 @@ const ROUTES = {
   webhooks:  Webhooks,
   scheduler: Scheduler,
   system:    System,
-}
-
-const LITE_INSTANCE = { id: 1, instance_id: 1, name: "Server", display_name: "Server" }
-
-export default function App() {
-  return (
-    <AuthProvider>
-      <AppGated />
-    </AuthProvider>
-  )
 }
 
 function SetupWizard({ onDone }) {
@@ -153,6 +147,14 @@ function SetupWizard({ onDone }) {
   )
 }
 
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppGated />
+    </AuthProvider>
+  )
+}
+
 function AppGated() {
   const { me, loading, refresh } = useAuth()
   const [needsSetup, setNeedsSetup] = useState(null)
@@ -177,16 +179,86 @@ function AppGated() {
   }
   if (needsSetup) return <SetupWizard onDone={() => { setNeedsSetup(false); refresh() }} />
   if (!me) return <LoginPage />
-  return <AppShell authUser={me} />
+  return <AppRoot authUser={me} />
 }
 
-function AppShell({ authUser }) {
+function AppRoot({ authUser }) {
   const [themeName, setThemeName] = useState(() => localStorage.getItem("sitrep-theme") || "dark")
   const [textSize, setTextSize] = useState(() => localStorage.getItem("sitrep-ts") || "M")
   const C = THEMES[themeName] || THEMES.dark
   const sz = TEXT_SIZES[textSize] || TEXT_SIZES.M
   const { toasts, push: toast, dismiss: dismissToast } = useToast()
+  const [selectedInstance, setSelectedInstance] = useState(null)
 
+  const ctxFullValue = useMemo(
+    () => ({ C, sz, themeName, textSizeKey: textSize, setTheme: setThemeName, setTextSize }),
+    [C, sz, themeName, textSize],
+  )
+
+  const selectInstance = useCallback((instance) => {
+    setSelectedInstance(instance)
+    if (instance) {
+      try { localStorage.setItem(SELECTED_INSTANCE_KEY, String(instance.id ?? instance.instance_id ?? "")) } catch {}
+    } else {
+      try { localStorage.removeItem(SELECTED_INSTANCE_KEY) } catch {}
+    }
+  }, [])
+
+  const backToServers = useCallback(() => {
+    setSelectedInstance(null)
+    try { localStorage.removeItem(SELECTED_INSTANCE_KEY) } catch {}
+  }, [])
+
+  useEffect(() => {
+    const savedId = (() => {
+      try { return localStorage.getItem(SELECTED_INSTANCE_KEY) } catch { return null }
+    })()
+    if (!savedId) return
+    apiGet("/api/servers").then(d => {
+      const saved = (d?.instances || []).find(i => String(i.id ?? i.instance_id) === savedId)
+      if (saved) setSelectedInstance(saved)
+      else { try { localStorage.removeItem(SELECTED_INSTANCE_KEY) } catch {} }
+    }).catch(() => {})
+  }, [])
+
+  if (!selectedInstance) {
+    return (
+      <Ctx.Provider value={ctxFullValue}>
+        <Toasts toasts={toasts} dismiss={dismissToast} />
+        <ServerPicker
+          authUser={authUser}
+          onSelect={selectInstance}
+          toast={toast}
+          themeName={themeName}
+          setThemeName={setThemeName}
+          textSize={textSize}
+          setTextSize={setTextSize}
+        />
+      </Ctx.Provider>
+    )
+  }
+  return (
+    <AppShell
+      C={C}
+      sz={sz}
+      themeName={themeName}
+      setThemeName={setThemeName}
+      textSize={textSize}
+      setTextSize={setTextSize}
+      authUser={authUser}
+      toast={toast}
+      toasts={toasts}
+      dismissToast={dismissToast}
+      selectedInstance={selectedInstance}
+      onBackToServers={backToServers}
+    />
+  )
+}
+
+function AppShell({
+  C, sz, themeName, setThemeName, textSize, setTextSize, authUser,
+  toast, toasts, dismissToast, selectedInstance, onBackToServers,
+}) {
   const getHash = () => {
     const h = window.location.hash.slice(1)
     if (TABS.find(t => t.id === h)) return h
@@ -265,6 +337,27 @@ function AppShell({ authUser }) {
           >
             ≡
           </button>
+          <button
+            onClick={onBackToServers}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg font-bold cursor-pointer shrink-0"
+            style={{ background: C.bgInput, color: C.textDim, border: `1px solid ${C.border}`, fontSize: sz.stat }}
+            onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+            onMouseLeave={e => (e.currentTarget.style.color = C.textDim)}
+          >
+            ← {mobile ? "" : "Servers"}
+          </button>
+          {selectedInstance && (
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg min-w-0 overflow-hidden"
+              style={{ background: C.accentBg, border: `1px solid ${C.accent}30` }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: C.accent }} />
+              <span className="font-bold truncate" style={{ color: C.accent, fontSize: sz.stat }}>
+                {selectedInstance.display_name || selectedInstance.name}
+                {!mobile && (selectedInstance.id != null ? ` #${selectedInstance.id}` : "")}
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <span className="font-black tracking-wide" style={{ color: C.textBright, fontSize: sz.base + 2 }}>
               SITREP
@@ -443,7 +536,7 @@ function AppShell({ authUser }) {
             onTouchStart={onSwipeStart}
             onTouchEnd={onSwipeEnd}
           >
-            <Tab toast={toast} authUser={authUser} role={authUser.role} instance={LITE_INSTANCE} tabId={tab} />
+            <Tab toast={toast} authUser={authUser} role={authUser.role} instance={selectedInstance} tabId={tab} />
           </div>
         </div>
 

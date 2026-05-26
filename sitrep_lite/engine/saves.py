@@ -6,15 +6,21 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from ..paths import PROFILE_DIR, BACKUPS_DIR
+from ..paths import PROFILE_DIR, BACKUPS_DIR, instance_profile
 
 
-def _save_dir() -> Path:
-    return PROFILE_DIR / ".save"
+def _profile_root(instance_id: int | None = None) -> Path:
+    if instance_id is not None:
+        return instance_profile(instance_id)
+    return PROFILE_DIR
 
 
-def list_saves() -> dict[str, Any]:
-    sd = _save_dir()
+def _save_dir(instance_id: int | None = None) -> Path:
+    return _profile_root(instance_id) / ".save"
+
+
+def list_saves(*, instance_id: int | None = None) -> dict[str, Any]:
+    sd = _save_dir(instance_id)
     if not sd.exists():
         return {"saves": []}
     saves = []
@@ -29,8 +35,8 @@ def list_saves() -> dict[str, Any]:
     return {"saves": saves}
 
 
-def inspect_save(save_path: str) -> dict[str, Any]:
-    target = _save_dir() / save_path
+def inspect_save(save_path: str, *, instance_id: int | None = None) -> dict[str, Any]:
+    target = _save_dir(instance_id) / save_path
     if not target.is_dir():
         raise FileNotFoundError(f"Save {save_path!r} not found")
     files = []
@@ -40,34 +46,36 @@ def inspect_save(save_path: str) -> dict[str, Any]:
     return {"name": save_path, "files": files}
 
 
-def purge_save(save_path: str | None = None) -> dict[str, Any]:
+def purge_save(save_path: str | None = None, *, instance_id: int | None = None) -> dict[str, Any]:
     if save_path:
-        target = _save_dir() / save_path
+        target = _save_dir(instance_id) / save_path
         if target.is_dir():
             shutil.rmtree(target)
         return {"purged": save_path}
-    sd = _save_dir()
+    sd = _save_dir(instance_id)
     if sd.exists():
         shutil.rmtree(sd)
         sd.mkdir()
     return {"purged": "all"}
 
 
-def create_backup() -> dict[str, Any]:
+def create_backup(*, instance_id: int | None = None) -> dict[str, Any]:
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d-%H%M%S")
-    filename = f"backup-{ts}.zip"
+    prefix = f"i{instance_id}-" if instance_id is not None else ""
+    filename = f"backup-{prefix}{ts}.zip"
     zip_path = BACKUPS_DIR / filename
-    sd = _save_dir()
+    profile = _profile_root(instance_id)
+    sd = _save_dir(instance_id)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         if sd.exists():
             for f in sd.rglob("*"):
                 if f.is_file():
-                    zf.write(f, f.relative_to(PROFILE_DIR))
+                    zf.write(f, f.relative_to(profile))
     return {"filename": filename, "size": zip_path.stat().st_size}
 
 
-def list_backups() -> dict[str, Any]:
+def list_backups(*, instance_id: int | None = None) -> dict[str, Any]:
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     backups = []
     for f in sorted(BACKUPS_DIR.glob("backup-*.zip"), reverse=True):
@@ -75,19 +83,20 @@ def list_backups() -> dict[str, Any]:
     return {"backups": backups}
 
 
-def restore_backup(filename: str) -> dict[str, Any]:
+def restore_backup(filename: str, *, instance_id: int | None = None) -> dict[str, Any]:
     zip_path = BACKUPS_DIR / filename
     if not zip_path.is_file():
         raise FileNotFoundError(f"Backup {filename!r} not found")
-    sd = _save_dir()
+    profile = _profile_root(instance_id)
+    sd = _save_dir(instance_id)
     if sd.exists():
         shutil.rmtree(sd)
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(PROFILE_DIR)
+        zf.extractall(profile)
     return {"restored": filename}
 
 
-def delete_backup(filename: str) -> dict[str, Any]:
+def delete_backup(filename: str, *, instance_id: int | None = None) -> dict[str, Any]:
     zip_path = BACKUPS_DIR / filename
     if not zip_path.is_file():
         raise FileNotFoundError(f"Backup {filename!r} not found")
