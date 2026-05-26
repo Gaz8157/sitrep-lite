@@ -53,22 +53,17 @@ async def ensure_steamcmd() -> dict[str, Any]:
     return {"state": "downloaded", "path": str(STEAMCMD_EXE)}
 
 
-async def _run_steamcmd(args: list[str], label: str) -> dict[str, Any]:
-    _write_log(f"Running: steamcmd {' '.join(args[1:])}")
+async def _run_steamcmd(args: list[str], label: str, instance_id: int | None = None) -> dict[str, Any]:
+    _write_log(f"Running: steamcmd {' '.join(args[1:])}", instance_id)
+    log_file = open(_log_path(instance_id), "a", encoding="utf-8", errors="replace")
     proc = await asyncio.create_subprocess_exec(
         *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdout=log_file,
+        stderr=log_file,
     )
-    while True:
-        line = await proc.stdout.readline()
-        if not line:
-            break
-        text = line.decode("utf-8", errors="replace").rstrip()
-        if text:
-            _write_log(text)
     await proc.wait()
-    _write_log(f"{label} finished with exit code {proc.returncode}")
+    log_file.close()
+    _write_log(f"{label} finished with exit code {proc.returncode}", instance_id)
     return {"returncode": proc.returncode}
 
 
