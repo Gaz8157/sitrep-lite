@@ -379,6 +379,8 @@ async def remove_ban(instance_id: int, identity: str,
     return do_remove(identity)
 
 
+_proc_cache: dict[int, tuple[int, "psutil.Process"]] = {}
+
 @router.get("/{instance_id}/process-stats")
 async def get_process_stats(instance_id: int,
                             user=Depends(require_server_role(*_READ_ROLES))) -> dict:
@@ -388,12 +390,20 @@ async def get_process_stats(instance_id: int,
     empty = {"running": False, "cpu_percent": None, "rss_mb": None,
              "main_pid": None, "total_logical_cpus": total_cpus}
     if not pid:
+        _proc_cache.pop(instance_id, None)
         return empty
     try:
-        p = psutil.Process(pid)
+        cached = _proc_cache.get(instance_id)
+        if cached and cached[0] == pid:
+            p = cached[1]
+        else:
+            p = psutil.Process(pid)
+            p.cpu_percent(interval=None)
+            _proc_cache[instance_id] = (pid, p)
         cpu = p.cpu_percent(interval=None)
         rss_mb = p.memory_info().rss / (1024 * 1024)
         return {"running": True, "cpu_percent": round(cpu, 1), "rss_mb": round(rss_mb, 1),
                 "main_pid": pid, "total_logical_cpus": total_cpus}
     except (psutil.NoSuchProcess, psutil.AccessDenied):
+        _proc_cache.pop(instance_id, None)
         return empty
