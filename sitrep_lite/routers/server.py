@@ -43,6 +43,12 @@ async def server_status(instance_id: int, user=Depends(require_server_role(*_REA
 
 @router.post("/{instance_id}/start")
 async def start_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
+    from ..paths import SERVER_EXE
+    if not SERVER_EXE.exists():
+        from ..engine.steamcmd import install_server
+        result = await install_server()
+        if result.get("state") == "error":
+            raise HTTPException(status_code=500, detail=result.get("output", "Install failed"))
     return _get_engine().lifecycle.start()
 
 

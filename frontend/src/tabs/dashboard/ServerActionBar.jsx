@@ -54,9 +54,9 @@ export function ServerActionBar({ status, players, acting, resetting, onStart, o
             {acting ? "Working..." : "Stop"}
           </Btn>
         ) : (
-          <Btn onClick={onStart} disabled={acting || !installed}>
+          <Btn onClick={onStart} disabled={acting}>
             <span style={{ fontSize: sz.base + 2 }}>{acting ? "⟳" : "▶"}</span>
-            {acting ? "Working..." : "Start"}
+            {acting ? "Working..." : installed ? "Start" : "Install & Start"}
           </Btn>
         )}
         {active && (

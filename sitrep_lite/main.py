@@ -16,7 +16,7 @@ from .db.panel import migrate as panel_migrate
 from .db.state import migrate as state_migrate
 from .engine.server_engine import ServerEngine
 from .paths import FRONTEND_DIST, ensure_dirs
-from .routers import auth, audit, scheduler, server, settings, system, users, webhooks
+from .routers import auth, audit, scheduler, server, settings, system, users, webhooks, workshop
 
 log = logging.getLogger(__name__)
 
@@ -68,11 +68,39 @@ app.include_router(settings.router)
 app.include_router(audit.router)
 app.include_router(webhooks.router)
 app.include_router(scheduler.router)
+app.include_router(workshop.router)
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": "1.0.0", "uptime_sec": round(time.time() - _BOOT_TS, 3)}
+
+
+@app.get("/api/packages")
+@app.post("/api/packages")
+def packages_stub() -> dict:
+    return {"packages": []}
+
+
+@app.get("/api/servers/{instance_id}/storage")
+def storage_stub(instance_id: int) -> dict:
+    return {"quotas": {}, "usage": {}}
+
+
+@app.get("/api/servers/{instance_id}/memory")
+@app.get("/api/servers/{instance_id}/memory/live")
+def memory_stub(instance_id: int) -> dict:
+    return {"rss_mb": 0, "limit_mb": 0}
+
+
+@app.get("/api/servers/memory-topology")
+def memory_topology_stub() -> dict:
+    return {"nodes": []}
+
+
+@app.get("/api/servers/{instance_id}/cpu-affinity")
+def cpu_affinity_stub(instance_id: int) -> dict:
+    return {"cores": [], "assigned": []}
 
 
 def _find_owner():

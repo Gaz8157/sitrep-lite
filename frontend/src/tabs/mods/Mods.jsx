@@ -9,10 +9,13 @@ import DeploymentsPanel from "./DeploymentsPanel.jsx"
 import ModDetailModal from "./ModDetailModal.jsx"
 import ImportPreviewModal from "./ImportPreviewModal.jsx"
 
-const VIEWS = ["installed"]
+const VIEWS = ["workshop", "installed", "deployments"]
 
 function loadView() {
-  return "installed"
+  try {
+    const v = localStorage.getItem("mods-view")
+    return VIEWS.includes(v) ? v : "workshop"
+  } catch { return "workshop" }
 }
 
 const GUID_LINE_RE = /[0-9A-Fa-f]{16}/g
@@ -215,7 +218,31 @@ export default function Mods({ instance, toast }) {
         </h2>
         <Badge text={`${mods.length} on server`} v="default" />
         <div className="flex-1" />
-        <Badge text={`Add mods by GUID or paste config.json`} v="default" />
+        <div
+          className="flex rounded-lg overflow-hidden"
+          style={{ background: C.bgInput, border: `1px solid ${C.border}` }}
+        >
+          {VIEWS.map(v => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className="px-4 font-bold capitalize cursor-pointer"
+              style={{
+                paddingTop: mobile ? 10 : 6,
+                paddingBottom: mobile ? 10 : 6,
+                background: view === v ? C.accentBg : "transparent",
+                color: view === v ? C.accent : C.textDim,
+                fontSize: sz.nav,
+              }}
+            >
+              {v === "installed"
+                ? `Installed (${mods.length})`
+                : v === "deployments"
+                ? `Packages (${depCount})`
+                : "Workshop"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {running && (
