@@ -44,7 +44,7 @@ def read_file(rel_path: str, *, instance_id: int | None = None) -> dict[str, Any
     if not target.is_file():
         raise FileNotFoundError(f"{rel_path} not found")
     content = target.read_text(errors="replace")
-    return {"path": rel_path, "content": content, "size": target.stat().st_size}
+    return {"path": rel_path, "rel_path": rel_path, "content": content, "size": target.stat().st_size}
 
 
 def write_file(rel_path: str, content: str, *, instance_id: int | None = None) -> dict[str, Any]:
