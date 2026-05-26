@@ -75,8 +75,30 @@ def packages_stub() -> dict:
 
 
 @app.get("/api/servers/{instance_id}/storage")
-def storage_stub(instance_id: int) -> dict:
-    return {"quotas": {}, "usage": {}}
+def storage_info(instance_id: int) -> dict:
+    from .paths import instance_dir
+    import shutil
+    idir = instance_dir(instance_id)
+    total_bytes = 0
+    breakdown = {}
+    if idir.exists():
+        for sub in idir.iterdir():
+            if sub.is_dir():
+                size = sum(f.stat().st_size for f in sub.rglob("*") if f.is_file())
+                breakdown[sub.name] = size
+                total_bytes += size
+            elif sub.is_file():
+                breakdown[sub.name] = sub.stat().st_size
+                total_bytes += sub.stat().st_size
+    disk = shutil.disk_usage(str(idir.parent if idir.exists() else "."))
+    return {
+        "total_bytes": total_bytes,
+        "breakdown": {k: round(v / 1e6, 1) for k, v in breakdown.items()},
+        "disk_total_gb": round(disk.total / 1e9, 1),
+        "disk_free_gb": round(disk.free / 1e9, 1),
+        "quotas": {},
+        "usage": {"total_mb": round(total_bytes / 1e6, 1)},
+    }
 
 
 @app.get("/api/servers/{instance_id}/memory")
