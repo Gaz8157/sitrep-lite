@@ -111,7 +111,7 @@ export default function StartupParamsPanel({
   const valueOf = (p) => {
     if (p.key in edits) return edits[p.key]
     if (p.active) return p.value
-    return p.type === "flag" ? false : p.type === "int" ? 0 : ""
+    return p.default != null ? p.default : (p.type === "flag" ? false : p.type === "int" ? 0 : "")
   }
 
   return (
