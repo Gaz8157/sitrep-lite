@@ -404,15 +404,34 @@ async def search_mods(
                     "index_count": len(_ws_index),
                     "index_status": _ws_index_state["status"],
                 }
-            return {
-                "mods": [],
-                "total": 0,
-                "page": 1,
-                "pages": 1,
-                "from_index": False,
-                "index_status": _ws_index_state["status"],
-                "index_count": 0,
-            }
+            try:
+                build_id = await _get_build_id()
+                raw = await _fetch_search_page(build_id, tag_list[0], page, sort)
+                pp = raw.get("pageProps", raw.get("props", {}).get("pageProps", {}))
+                assets = pp.get("assets", {}) or {}
+                rows = assets.get("rows", []) or []
+                total = assets.get("count", 0) or 0
+                simplified = [_simplify_mod(m) for m in rows]
+                _schedule_prefetch(simplified)
+                return {
+                    "mods": simplified,
+                    "total": total,
+                    "page": page,
+                    "pages": max(1, math.ceil(total / max(1, len(rows)))) if rows else 1,
+                    "from_index": False,
+                    "index_status": _ws_index_state["status"],
+                    "index_count": 0,
+                }
+            except Exception:
+                return {
+                    "mods": [],
+                    "total": 0,
+                    "page": 1,
+                    "pages": 1,
+                    "from_index": False,
+                    "index_status": _ws_index_state["status"],
+                    "index_count": 0,
+                }
 
     cache_key = f"search:{q}:{page}:{sort}"
     cached = _cache_get(cache_key, WS_CACHE_TTL_SEARCH)
@@ -580,3 +599,12 @@ try:
     _load_ws_index_from_disk()
 except Exception:
     pass
+
+
+def start_index_build_if_needed() -> None:
+    global _ws_index_task
+    if _ws_index and _ws_index_state["status"] == "ready":
+        return
+    if _ws_index_state["status"] == "building":
+        return
+    _ws_index_task = asyncio.ensure_future(_build_ws_index_bg())

@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
     ensure_default_config(secrets.get("rcon_password", ""))
     _engine = ServerEngine()
     server.set_engine(_engine)
+    workshop.start_index_build_if_needed()
     yield
     if _engine and _engine.lifecycle.pid:
         log.info("Shutting down — stopping server process")
