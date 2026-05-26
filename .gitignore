@@ -1,0 +1,13 @@
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+build/out/
+build/tmp/
+data/
+server/
+profile/
+steamcmd/
+frontend/node_modules/
+frontend/dist/
+.ruff_cache/
