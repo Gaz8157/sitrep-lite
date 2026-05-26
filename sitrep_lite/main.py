@@ -88,19 +88,47 @@ def storage_stub(instance_id: int) -> dict:
 
 
 @app.get("/api/servers/{instance_id}/memory")
+def memory_settings_get(instance_id: int) -> dict:
+    from .engine.resources import get_memory_settings
+    return get_memory_settings(instance_id)
+
+
+@app.put("/api/servers/{instance_id}/memory")
+def memory_settings_put(instance_id: int, payload: dict) -> dict:
+    from .engine.resources import set_memory_settings
+    return set_memory_settings(instance_id, payload)
+
+
+@app.delete("/api/servers/{instance_id}/memory")
+def memory_settings_reset(instance_id: int) -> dict:
+    from .engine.resources import reset_memory_settings
+    return reset_memory_settings(instance_id)
+
+
 @app.get("/api/servers/{instance_id}/memory/live")
-def memory_stub(instance_id: int) -> dict:
-    return {"rss_mb": 0, "limit_mb": 0}
+def memory_live(instance_id: int) -> dict:
+    from .engine.resources import get_memory_live
+    pid = _engine.lifecycle.pid if _engine else None
+    return get_memory_live(instance_id, pid)
 
 
 @app.get("/api/servers/memory-topology")
-def memory_topology_stub() -> dict:
-    return {"nodes": []}
+def memory_topology() -> dict:
+    from .engine.resources import get_memory_topology
+    return get_memory_topology()
 
 
 @app.get("/api/servers/{instance_id}/cpu-affinity")
-def cpu_affinity_stub(instance_id: int) -> dict:
-    return {"cores": [], "assigned": []}
+def cpu_affinity_get(instance_id: int) -> dict:
+    from .engine.resources import get_cpu_affinity
+    return get_cpu_affinity(instance_id)
+
+
+@app.put("/api/servers/{instance_id}/cpu-affinity")
+def cpu_affinity_put(instance_id: int, payload: dict) -> dict:
+    from .engine.resources import set_cpu_affinity
+    pid = _engine.lifecycle.pid if _engine else None
+    return set_cpu_affinity(instance_id, payload, pid)
 
 
 def _find_owner():
