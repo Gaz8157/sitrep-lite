@@ -24,7 +24,15 @@ def list_mods(*, instance_id: int | None = None) -> dict[str, Any]:
     mods = cfg.get("game", {}).get("mods", [])
     if not isinstance(mods, list):
         mods = []
-    return {"mods": mods}
+    normalized = []
+    for m in mods:
+        normalized.append({
+            "mod_guid": m.get("modId", ""),
+            "modId": m.get("modId", ""),
+            "name": m.get("name", ""),
+            "version": m.get("version", ""),
+        })
+    return {"mods": normalized}
 
 
 def add_mod(guid_or_url: str, *, instance_id: int | None = None) -> dict[str, Any]:
