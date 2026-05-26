@@ -97,35 +97,38 @@ def _save_affinity_prefs(prefs: dict[str, Any]) -> None:
 
 def get_cpu_affinity(instance_id: int) -> dict[str, Any]:
     prefs = _load_affinity_prefs()
-    mode = prefs.get("mode", "auto")
-    topo = _build_topology()
     total = psutil.cpu_count(logical=True) or 1
+    all_cores = list(range(total))
 
-    if mode == "custom" and prefs.get("cpu_list"):
-        cpu_list_str = prefs["cpu_list"]
+    if prefs.get("cpu_list"):
+        pinned = _parse_cpu_list(prefs["cpu_list"])
     else:
-        cpus = _cpu_list_from_mode(mode)
-        cpu_list_str = _format_cpu_list(cpus)
+        pinned = all_cores
 
     return {
-        "mode": mode,
-        "cpu_list": cpu_list_str,
-        "topology": topo,
+        "mode": prefs.get("mode", "auto"),
+        "cpu_list": _format_cpu_list(pinned),
+        "total_cores": total,
+        "all_cores": all_cores,
+        "pinned_cores": pinned,
+        "topology": _build_topology(),
     }
 
 
 def set_cpu_affinity(instance_id: int, payload: dict[str, Any], pid: int | None) -> dict[str, Any]:
-    mode = payload.get("mode", "auto")
-    if mode not in ("auto", "ccd0", "ccd1", "custom"):
-        return {"error": f"Invalid mode: {mode}"}
+    total = psutil.cpu_count(logical=True) or 1
+    all_cores = list(range(total))
 
-    if mode == "custom":
-        raw = payload.get("cpu_list", "")
-        if not raw:
-            return {"error": "cpu_list required for custom mode"}
-        cpus = _parse_cpu_list(raw)
+    cores = payload.get("cores")
+    if isinstance(cores, list) and len(cores) > 0:
+        cpus = [int(c) for c in cores if 0 <= int(c) < total]
+        mode = "custom" if set(cpus) != set(all_cores) else "auto"
     else:
-        cpus = _cpu_list_from_mode(mode)
+        mode = payload.get("mode", "auto")
+        if mode == "auto":
+            cpus = all_cores
+        else:
+            cpus = _cpu_list_from_mode(mode)
 
     cpu_list_str = _format_cpu_list(cpus)
     prefs = {"mode": mode, "cpu_list": cpu_list_str}
