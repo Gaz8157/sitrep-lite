@@ -2,69 +2,150 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import zipfile
+from pathlib import Path
 from typing import Any
 
 import httpx
 
-from ..paths import STEAMCMD_DIR, STEAMCMD_EXE, SERVER_DIR, REFORGER_APP_ID
+from ..paths import STEAMCMD_DIR, STEAMCMD_EXE, SERVER_DIR, PROFILE_DIR, REFORGER_APP_ID
 
 log = logging.getLogger(__name__)
 
 STEAMCMD_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
+
+_install_state: dict[str, Any] = {"status": "idle"}
+_install_task: asyncio.Task | None = None
+
+
+def _log_path() -> Path:
+    d = PROFILE_DIR / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "install.log"
+
+
+def _write_log(msg: str) -> None:
+    with open(_log_path(), "a", encoding="utf-8") as f:
+        f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+
+
+def install_status() -> dict[str, Any]:
+    return dict(_install_state)
 
 
 async def ensure_steamcmd() -> dict[str, Any]:
     if STEAMCMD_EXE.exists():
         return {"state": "ready", "path": str(STEAMCMD_EXE)}
     STEAMCMD_DIR.mkdir(parents=True, exist_ok=True)
-    async with httpx.AsyncClient() as client:
+    _write_log("Downloading SteamCMD...")
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.get(STEAMCMD_URL, follow_redirects=True)
         resp.raise_for_status()
     zip_path = STEAMCMD_DIR / "steamcmd.zip"
     zip_path.write_bytes(resp.content)
+    _write_log(f"Downloaded {len(resp.content)} bytes, extracting...")
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(STEAMCMD_DIR)
     zip_path.unlink()
+    _write_log("SteamCMD extracted.")
     return {"state": "downloaded", "path": str(STEAMCMD_EXE)}
 
 
-async def install_server(force: bool = False) -> dict[str, Any]:
-    await ensure_steamcmd()
-    server_exe = SERVER_DIR / "ArmaReforgerServer.exe"
-    if server_exe.exists() and not force:
-        return {"state": "already_installed"}
-    SERVER_DIR.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        str(STEAMCMD_EXE),
-        "+force_install_dir", str(SERVER_DIR),
-        "+login", "anonymous",
-        "+app_update", str(REFORGER_APP_ID), "validate",
-        "+quit",
-    ]
+async def _run_steamcmd(args: list[str], label: str) -> dict[str, Any]:
+    _write_log(f"Running: steamcmd {' '.join(args[1:])}")
     proc = await asyncio.create_subprocess_exec(
-        *cmd,
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    stdout, _ = await proc.communicate()
-    output = stdout.decode("utf-8", errors="replace") if stdout else ""
-    if proc.returncode != 0:
-        return {"state": "error", "output": output[-2000:]}
-    return {"state": "installed", "output": output[-2000:]}
+    while True:
+        line = await proc.stdout.readline()
+        if not line:
+            break
+        text = line.decode("utf-8", errors="replace").rstrip()
+        if text:
+            _write_log(text)
+    await proc.wait()
+    _write_log(f"{label} finished with exit code {proc.returncode}")
+    return {"returncode": proc.returncode}
+
+
+async def _install_bg(force: bool = False) -> None:
+    global _install_state
+    try:
+        _install_state = {"status": "installing", "started_at": time.time()}
+
+        with open(_log_path(), "w", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] === Server Install Started ===\n")
+
+        await ensure_steamcmd()
+
+        _write_log("Running SteamCMD self-update (first run may take a minute)...")
+        result = await _run_steamcmd(
+            [str(STEAMCMD_EXE), "+quit"],
+            "SteamCMD self-update",
+        )
+
+        server_exe = SERVER_DIR / "ArmaReforgerServer.exe"
+        if server_exe.exists() and not force:
+            _write_log("Server binary already exists. Done.")
+            _install_state = {"status": "installed"}
+            return
+
+        SERVER_DIR.mkdir(parents=True, exist_ok=True)
+        _write_log(f"Installing Arma Reforger Dedicated Server (App ID {REFORGER_APP_ID})...")
+        _write_log("This will download ~2 GB. Please wait...")
+
+        result = await _run_steamcmd(
+            [
+                str(STEAMCMD_EXE),
+                "+force_install_dir", str(SERVER_DIR),
+                "+login", "anonymous",
+                "+app_update", str(REFORGER_APP_ID), "validate",
+                "+quit",
+            ],
+            "Server install",
+        )
+
+        if result["returncode"] != 0:
+            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']}")
+            _install_state = {"status": "error", "error": f"SteamCMD exit code {result['returncode']}"}
+            return
+
+        if server_exe.exists():
+            _write_log("=== Server installed successfully! ===")
+            _install_state = {"status": "installed"}
+        else:
+            _write_log("ERROR: Install completed but ArmaReforgerServer.exe not found")
+            _install_state = {"status": "error", "error": "Binary not found after install"}
+
+    except Exception as e:
+        _write_log(f"ERROR: {e}")
+        _install_state = {"status": "error", "error": str(e)}
+
+
+async def install_server(force: bool = False) -> dict[str, Any]:
+    global _install_task
+    if _install_state.get("status") == "installing":
+        return {"state": "already_installing"}
+    _install_task = asyncio.create_task(_install_bg(force=force))
+    return {"state": "installing"}
+
+
+async def update_server() -> dict[str, Any]:
+    return await install_server(force=True)
 
 
 async def subscribe_mod(mod_guid: str) -> dict[str, Any]:
     await ensure_steamcmd()
-    cmd = [
-        str(STEAMCMD_EXE),
-        "+login", "anonymous",
-        "+workshop_download_item", "1874880", mod_guid,
-        "+quit",
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    result = await _run_steamcmd(
+        [
+            str(STEAMCMD_EXE),
+            "+login", "anonymous",
+            "+workshop_download_item", "1874880", mod_guid,
+            "+quit",
+        ],
+        f"Mod download {mod_guid}",
     )
-    stdout, _ = await proc.communicate()
-    output = stdout.decode("utf-8", errors="replace") if stdout else ""
-    return {"state": "subscribed" if proc.returncode == 0 else "error", "output": output[-2000:]}
+    return {"state": "subscribed" if result["returncode"] == 0 else "error"}

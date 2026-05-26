@@ -44,12 +44,30 @@ async def server_status(instance_id: int, user=Depends(require_server_role(*_REA
 @router.post("/{instance_id}/start")
 async def start_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
     from ..paths import SERVER_EXE
+    from ..engine.steamcmd import install_server, install_status
     if not SERVER_EXE.exists():
-        from ..engine.steamcmd import install_server
-        result = await install_server()
-        if result.get("state") == "error":
-            raise HTTPException(status_code=500, detail=result.get("output", "Install failed"))
+        status = install_status()
+        if status.get("status") == "installing":
+            return {"state": "installing", "message": "Server is being installed. Check Console for progress."}
+        await install_server()
+        return {"state": "installing", "message": "Installing server via SteamCMD. Check Console for progress."}
     return _get_engine().lifecycle.start()
+
+
+@router.post("/{instance_id}/update")
+async def update_server(instance_id: int, user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
+    from ..engine.steamcmd import update_server
+    engine = _get_engine()
+    if engine.lifecycle.pid:
+        engine.lifecycle.stop()
+    await update_server()
+    return {"state": "updating", "message": "Updating server via SteamCMD. Check Console for progress."}
+
+
+@router.get("/{instance_id}/install-status")
+async def get_install_status(instance_id: int, user=Depends(require_server_role(*_READ_ROLES))) -> dict:
+    from ..engine.steamcmd import install_status
+    return install_status()
 
 
 @router.post("/{instance_id}/stop")
