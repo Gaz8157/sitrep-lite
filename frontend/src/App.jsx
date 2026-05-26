@@ -68,9 +68,103 @@ export default function App() {
   )
 }
 
+function SetupWizard({ onDone }) {
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setError("")
+    if (password.length < 8) { setError("Password must be 8+ characters"); return }
+    setLoading(true)
+    try {
+      const r = await fetch("/api/setup/owner", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      })
+      const d = await r.json()
+      if (d.error) { setError(d.error); return }
+      onDone()
+    } catch { setError("Failed to create account") }
+    finally { setLoading(false) }
+  }
+
+  const c = {
+    bg: "#0e1116", card: "#161a22", input: "#1c2230", border: "#2a3142",
+    text: "#e6e9ef", muted: "#8b95a8", dim: "#5f6a82", accent: "#6cd5ff",
+    red: "#ff6b6b", redBg: "rgba(255,107,107,0.10)", redBorder: "rgba(255,107,107,0.35)",
+  }
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: c.bg, color: c.text,
+      fontFamily: "'JetBrains Mono','SF Mono',Consolas,monospace",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <div style={{
+        width: 420, padding: 32, background: c.card,
+        border: `1px solid ${c.border}`, borderRadius: 14,
+        boxShadow: "0 24px 48px rgba(0,0,0,0.4)",
+      }}>
+        <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: 2, color: c.text }}>SITREP LITE</div>
+        <div style={{ fontSize: 11, color: c.dim, marginTop: 2, marginBottom: 24 }}>First-time setup — create your admin account</div>
+        <form onSubmit={submit}>
+          <input
+            placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} autoFocus
+            autoComplete="off"
+            style={{
+              width: "100%", boxSizing: "border-box", padding: "12px 14px",
+              background: c.input, border: `1px solid ${c.border}`,
+              borderRadius: 8, color: c.text, fontFamily: "inherit", fontSize: 14,
+              outline: "none", marginBottom: 12,
+            }}
+          />
+          <input
+            placeholder="Password (8+ characters)" type="password" value={password}
+            onChange={e => setPassword(e.target.value)}
+            autoComplete="new-password"
+            style={{
+              width: "100%", boxSizing: "border-box", padding: "12px 14px",
+              background: c.input, border: `1px solid ${c.border}`,
+              borderRadius: 8, color: c.text, fontFamily: "inherit", fontSize: 14,
+              outline: "none", marginBottom: 12,
+            }}
+          />
+          {error && (
+            <div style={{
+              padding: "10px 12px", background: c.redBg,
+              border: `1px solid ${c.redBorder}`, color: c.red,
+              fontSize: 13, borderRadius: 8, marginBottom: 12,
+            }}>{error}</div>
+          )}
+          <button type="submit" disabled={loading || !username || !password} style={{
+            width: "100%", padding: "12px 14px", background: c.accent, color: "#000",
+            border: "none", borderRadius: 8, fontWeight: 800, fontSize: 14, cursor: "pointer",
+            fontFamily: "inherit",
+          }}>
+            {loading ? "Creating..." : "Create Admin Account"}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function AppGated() {
-  const { me, loading } = useAuth()
-  if (loading) {
+  const { me, loading, refresh } = useAuth()
+  const [needsSetup, setNeedsSetup] = useState(null)
+
+  useEffect(() => {
+    fetch("/api/setup/status")
+      .then(r => r.json())
+      .then(d => setNeedsSetup(!d.setup_complete))
+      .catch(() => setNeedsSetup(false))
+  }, [])
+
+  if (loading || needsSetup === null) {
     return (
       <div style={{
         minHeight: "100vh", background: "#0e1116", color: "#e6e9ef",
@@ -81,6 +175,7 @@ function AppGated() {
       </div>
     )
   }
+  if (needsSetup) return <SetupWizard onDone={() => { setNeedsSetup(false); refresh() }} />
   if (!me) return <LoginPage />
   return <AppShell authUser={me} />
 }

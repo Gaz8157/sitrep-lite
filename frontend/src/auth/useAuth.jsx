@@ -15,7 +15,7 @@ export function AuthProvider({ children }) {
         return null
       }
       const d = await r.json()
-      setMe(d.user); setServerAccess(d.server_access || {})
+      setMe(d.user)
       return d.user
     } catch {
       setMe(null); setServerAccess({})
@@ -39,7 +39,7 @@ export function AuthProvider({ children }) {
     }
     const d = await r.json()
     if (d.requires_2fa) return { requires_2fa: true, pending_token: d.pending_token }
-    setMe(d.user); setServerAccess(d.server_access || {})
+    setMe(d.user)
     return { user: d.user }
   }, [])
 
@@ -54,7 +54,7 @@ export function AuthProvider({ children }) {
       throw new Error(err.detail || "2fa_failed")
     }
     const d = await r.json()
-    setMe(d.user); setServerAccess(d.server_access || {})
+    setMe(d.user)
     return d.user
   }, [])
 
