@@ -13,13 +13,6 @@ function fmtBytes(n) {
   return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
 }
 
-// Rows shown in the breakdown. Game install ("server") is intentionally
-// omitted — operators only care about the buckets they can affect.
-const ROWS = [
-  ["workshop-downloads", "Workshop mods"],
-  ["profile", "Profile (saves/addons)"],
-  ["other", "Other"],
-]
 
 export function StorageCard({ instanceId, onFloat, onHide }) {
   const { C, sz } = useT()
@@ -81,14 +74,18 @@ export function StorageCard({ instanceId, onFloat, onHide }) {
             )}
             {data.breakdown && (
               <div className="mt-3">
-                {ROWS.map(([key, label]) => (
-                  <div key={key} className="flex justify-between mb-1 last:mb-0">
-                    <span style={{ color: C.textMuted, fontSize: sz.stat }}>{label}</span>
-                    <span className="font-mono" style={{ color: C.text, fontSize: sz.stat }}>
-                      {fmtBytes(data.breakdown[key] || 0)}
-                    </span>
-                  </div>
-                ))}
+                {Object.entries(data.breakdown).map(([key, entry]) => {
+                  const sizeMb = typeof entry === "object" ? entry.size_mb : (typeof entry === "number" ? entry : 0)
+                  const label = typeof entry === "object" && entry.label ? entry.label : key
+                  return (
+                    <div key={key} className="flex justify-between mb-1 last:mb-0">
+                      <span style={{ color: C.textMuted, fontSize: sz.stat }}>{label}</span>
+                      <span className="font-mono" style={{ color: C.text, fontSize: sz.stat }}>
+                        {sizeMb >= 1024 ? `${(sizeMb / 1024).toFixed(1)} GB` : `${sizeMb.toFixed(0)} MB`}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             )}
             <div className="flex justify-end mt-2">
