@@ -68,10 +68,87 @@ def health() -> dict:
     return {"status": "ok", "version": "1.0.0", "uptime_sec": round(time.time() - _BOOT_TS, 3)}
 
 
+import json as _json_mod
+from .paths import DATA_DIR
+
+_PACKAGES_FILE = DATA_DIR / "packages.json"
+
+
+def _load_packages() -> list:
+    if _PACKAGES_FILE.exists():
+        try:
+            return _json_mod.loads(_PACKAGES_FILE.read_text())
+        except Exception:
+            pass
+    return []
+
+
+def _save_packages(pkgs: list) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _PACKAGES_FILE.write_text(_json_mod.dumps(pkgs, indent=2))
+
+
 @app.get("/api/packages")
+def packages_list() -> dict:
+    return {"packages": _load_packages()}
+
+
 @app.post("/api/packages")
-def packages_stub() -> dict:
-    return {"packages": []}
+def packages_create(payload: dict) -> dict:
+    instance_id = payload.get("instance_id")
+    name = payload.get("name", "").strip()
+    if not name:
+        return {"error": "name required"}
+    mods = []
+    if instance_id is not None:
+        from .paths import instance_config
+        cfg_path = instance_config(instance_id)
+        if cfg_path.exists():
+            try:
+                cfg = _json_mod.loads(cfg_path.read_text())
+                raw_mods = cfg.get("game", {}).get("mods", [])
+                mods = [{"mod_guid": m.get("modId", ""), "modId": m.get("modId", ""),
+                         "name": m.get("name", ""), "version": m.get("version", "")}
+                        for m in raw_mods]
+            except Exception:
+                pass
+    pkgs = _load_packages()
+    new_id = max((p.get("id", 0) for p in pkgs), default=0) + 1
+    pkg = {"id": new_id, "name": name, "mods": mods, "created_ts": int(time.time())}
+    pkgs.append(pkg)
+    _save_packages(pkgs)
+    return pkg
+
+
+@app.post("/api/packages/{pkg_id}/apply")
+def packages_apply(pkg_id: int, payload: dict) -> dict:
+    instance_id = payload.get("instance_id")
+    if instance_id is None:
+        return {"error": "instance_id required"}
+    pkgs = _load_packages()
+    pkg = next((p for p in pkgs if p.get("id") == pkg_id), None)
+    if not pkg:
+        return {"error": "package not found"}
+    from .paths import instance_config
+    from .engine.config import write_config, read_config
+    cfg = read_config(instance_id=instance_id)
+    cfg.setdefault("game", {})["mods"] = [
+        {"modId": m.get("mod_guid") or m.get("modId", ""),
+         "name": m.get("name", ""), "version": m.get("version", "")}
+        for m in pkg.get("mods", [])
+    ]
+    write_config(cfg, instance_id=instance_id)
+    pkg["last_applied_at"] = int(time.time())
+    _save_packages(pkgs)
+    return {"message": f'Applied "{pkg["name"]}" ({len(pkg.get("mods", []))} mods)', "name": pkg["name"]}
+
+
+@app.delete("/api/packages/{pkg_id}")
+def packages_delete(pkg_id: int) -> dict:
+    pkgs = _load_packages()
+    pkgs = [p for p in pkgs if p.get("id") != pkg_id]
+    _save_packages(pkgs)
+    return {"deleted": pkg_id}
 
 
 _storage_cache: dict[int, tuple[float, dict]] = {}
