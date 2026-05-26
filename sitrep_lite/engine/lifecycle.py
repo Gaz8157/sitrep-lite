@@ -93,7 +93,7 @@ class ServerLifecycle:
             f"-logDir={prof / 'logs'}",
             "-maxFPS=60",
         ]
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"cwd": str(exe.parent)}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         self._process = subprocess.Popen(args, **kwargs)
