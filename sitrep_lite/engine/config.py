@@ -115,6 +115,12 @@ def ensure_default_config_for(instance_id: int, rcon_password: str) -> dict[str,
     if cfg_path.exists():
         return json.loads(cfg_path.read_text())
     config = _default_config_dict(rcon_password)
+    offset = instance_id - 1
+    config["bindPort"] = 2001 + offset
+    config["publicPort"] = 2001 + offset
+    config["a2s"]["port"] = 17777 + offset
+    config["rcon"]["port"] = 19999 + offset
+    config["game"]["name"] = f"SITREP Lite Server {instance_id}"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = cfg_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(config, indent=2) + "\n")
