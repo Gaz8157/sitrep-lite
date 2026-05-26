@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..paths import CONFIG_JSON, PROFILE_DIR, DATA_DIR
+from ..paths import CONFIG_JSON, PROFILE_DIR, DATA_DIR, instance_config, instance_profile
 
 _PARAMS_FILE = DATA_DIR / "startup_params.json"
 
@@ -50,6 +50,8 @@ def read_params() -> dict[str, Any]:
     else:
         data = {"params": {}, "customLaunchParams": ""}
     current = data.get("params", {})
+    if isinstance(current, list):
+        current = {}
     merged = []
     for p in PARAM_CATALOG:
         entry = dict(p)
@@ -58,6 +60,7 @@ def read_params() -> dict[str, Any]:
         merged.append(entry)
     return {
         "params": merged,
+        "categories": categories_in_order(),
         "customLaunchParams": data.get("customLaunchParams", ""),
     }
 
@@ -69,16 +72,24 @@ def write_params(params: dict[str, Any], custom_launch_params: str = "") -> dict
     return read_params()
 
 
-def build_launch_args() -> list[str]:
-    data = read_params()
+def build_launch_args(instance_id: int | None = None) -> list[str]:
+    if _PARAMS_FILE.exists():
+        raw = json.loads(_PARAMS_FILE.read_text())
+    else:
+        raw = {"params": {}}
+    current = raw.get("params", {})
+    if isinstance(current, list):
+        current = {}
+    cfg = instance_config(instance_id) if instance_id is not None else CONFIG_JSON
+    prof = instance_profile(instance_id) if instance_id is not None else PROFILE_DIR
     args = [
-        f"-config={CONFIG_JSON}",
-        f"-profile={PROFILE_DIR}",
-        f"-logDir={PROFILE_DIR / 'logs'}",
+        f"-config={cfg}",
+        f"-profile={prof}",
+        f"-logDir={prof / 'logs'}",
     ]
     for p in PARAM_CATALOG:
         key = p["key"]
-        val = data["current"].get(key)
+        val = current.get(key)
         if val is None:
             val = p.get("default")
         if p["type"] == "flag":

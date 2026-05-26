@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from ..paths import STEAMCMD_DIR, STEAMCMD_EXE, SERVER_DIR, PROFILE_DIR, REFORGER_APP_ID
+from ..paths import STEAMCMD_DIR, STEAMCMD_EXE, SERVER_DIR, PROFILE_DIR, REFORGER_APP_ID, instance_server, instance_profile
 
 log = logging.getLogger(__name__)
 
@@ -19,14 +19,15 @@ _install_state: dict[str, Any] = {"status": "idle"}
 _install_task: asyncio.Task | None = None
 
 
-def _log_path() -> Path:
-    d = PROFILE_DIR / "logs"
+def _log_path(instance_id: int | None = None) -> Path:
+    profile = instance_profile(instance_id) if instance_id is not None else PROFILE_DIR
+    d = profile / "logs"
     d.mkdir(parents=True, exist_ok=True)
     return d / "install.log"
 
 
-def _write_log(msg: str) -> None:
-    with open(_log_path(), "a", encoding="utf-8") as f:
+def _write_log(msg: str, instance_id: int | None = None) -> None:
+    with open(_log_path(instance_id), "a", encoding="utf-8") as f:
         f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
 
 
@@ -71,36 +72,37 @@ async def _run_steamcmd(args: list[str], label: str) -> dict[str, Any]:
     return {"returncode": proc.returncode}
 
 
-async def _install_bg(force: bool = False) -> None:
+async def _install_bg(force: bool = False, instance_id: int | None = None) -> None:
     global _install_state
+    srv_dir = instance_server(instance_id) if instance_id is not None else SERVER_DIR
     try:
         _install_state = {"status": "installing", "started_at": time.time()}
 
-        with open(_log_path(), "w", encoding="utf-8") as f:
+        with open(_log_path(instance_id), "w", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%H:%M:%S')}] === Server Install Started ===\n")
 
         await ensure_steamcmd()
 
-        _write_log("Running SteamCMD self-update (first run may take a minute)...")
+        _write_log("Running SteamCMD self-update (first run may take a minute)...", instance_id)
         result = await _run_steamcmd(
             [str(STEAMCMD_EXE), "+quit"],
             "SteamCMD self-update",
         )
 
-        server_exe = SERVER_DIR / "ArmaReforgerServer.exe"
+        server_exe = srv_dir / "ArmaReforgerServer.exe"
         if server_exe.exists() and not force:
-            _write_log("Server binary already exists. Done.")
+            _write_log("Server binary already exists. Done.", instance_id)
             _install_state = {"status": "installed"}
             return
 
-        SERVER_DIR.mkdir(parents=True, exist_ok=True)
-        _write_log(f"Installing Arma Reforger Dedicated Server (App ID {REFORGER_APP_ID})...")
-        _write_log("This will download ~2 GB. Please wait...")
+        srv_dir.mkdir(parents=True, exist_ok=True)
+        _write_log(f"Installing Arma Reforger Dedicated Server (App ID {REFORGER_APP_ID})...", instance_id)
+        _write_log("This will download ~2 GB. Please wait...", instance_id)
 
         result = await _run_steamcmd(
             [
                 str(STEAMCMD_EXE),
-                "+force_install_dir", str(SERVER_DIR),
+                "+force_install_dir", str(srv_dir),
                 "+login", "anonymous",
                 "+app_update", str(REFORGER_APP_ID), "validate",
                 "+quit",
@@ -109,32 +111,32 @@ async def _install_bg(force: bool = False) -> None:
         )
 
         if result["returncode"] != 0:
-            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']}")
+            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']}", instance_id)
             _install_state = {"status": "error", "error": f"SteamCMD exit code {result['returncode']}"}
             return
 
         if server_exe.exists():
-            _write_log("=== Server installed successfully! ===")
+            _write_log("=== Server installed successfully! ===", instance_id)
             _install_state = {"status": "installed"}
         else:
-            _write_log("ERROR: Install completed but ArmaReforgerServer.exe not found")
+            _write_log("ERROR: Install completed but ArmaReforgerServer.exe not found", instance_id)
             _install_state = {"status": "error", "error": "Binary not found after install"}
 
     except Exception as e:
-        _write_log(f"ERROR: {e}")
+        _write_log(f"ERROR: {e}", instance_id)
         _install_state = {"status": "error", "error": str(e)}
 
 
-async def install_server(force: bool = False) -> dict[str, Any]:
+async def install_server(force: bool = False, instance_id: int | None = None) -> dict[str, Any]:
     global _install_task
     if _install_state.get("status") == "installing":
         return {"state": "already_installing"}
-    _install_task = asyncio.create_task(_install_bg(force=force))
+    _install_task = asyncio.create_task(_install_bg(force=force, instance_id=instance_id))
     return {"state": "installing"}
 
 
-async def update_server() -> dict[str, Any]:
-    return await install_server(force=True)
+async def update_server(instance_id: int | None = None) -> dict[str, Any]:
+    return await install_server(force=True, instance_id=instance_id)
 
 
 async def subscribe_mod(mod_guid: str) -> dict[str, Any]:

@@ -1,0 +1,42 @@
+{
+  "bindAddress": "0.0.0.0",
+  "bindPort": 2001,
+  "publicAddress": "",
+  "publicPort": 2001,
+  "a2s": {
+    "address": "0.0.0.0",
+    "port": 17777
+  },
+  "rcon": {
+    "address": "127.0.0.1",
+    "port": 19999,
+    "password": "af9f65f3509472ce7c526dfbf0a9f5a1",
+    "permission": "admin",
+    "blacklist": [],
+    "whitelist": []
+  },
+  "game": {
+    "name": "SITREP Lite Server",
+    "password": "",
+    "passwordAdmin": "",
+    "scenarioId": "{ECC61978EDCC2B5A}Missions/23_Campaign.conf",
+    "maxPlayers": 32,
+    "visible": true,
+    "crossPlatform": true,
+    "supportedPlatforms": [
+      "PLATFORM_PC",
+      "PLATFORM_XBL",
+      "PLATFORM_PSN"
+    ],
+    "gameProperties": {
+      "serverMaxViewDistance": 2500,
+      "serverMinGrassDistance": 50,
+      "fastValidation": true,
+      "networkViewDistance": 1500
+    },
+    "mods": []
+  },
+  "operating": {
+    "lobbyPlayerSynchronise": true
+  }
+}
