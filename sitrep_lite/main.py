@@ -74,31 +74,45 @@ def packages_stub() -> dict:
     return {"packages": []}
 
 
+_storage_cache: dict[int, tuple[float, dict]] = {}
+
 @app.get("/api/servers/{instance_id}/storage")
 def storage_info(instance_id: int) -> dict:
+    import shutil as _shutil
+    now = time.time()
+    cached = _storage_cache.get(instance_id)
+    if cached and now - cached[0] < 60:
+        return cached[1]
     from .paths import instance_dir
-    import shutil
     idir = instance_dir(instance_id)
-    total_bytes = 0
-    breakdown = {}
-    if idir.exists():
-        for sub in idir.iterdir():
-            if sub.is_dir():
-                size = sum(f.stat().st_size for f in sub.rglob("*") if f.is_file())
-                breakdown[sub.name] = size
-                total_bytes += size
-            elif sub.is_file():
-                breakdown[sub.name] = sub.stat().st_size
-                total_bytes += sub.stat().st_size
-    disk = shutil.disk_usage(str(idir.parent if idir.exists() else "."))
-    return {
-        "total_bytes": total_bytes,
-        "breakdown": {k: round(v / 1e6, 1) for k, v in breakdown.items()},
+    try:
+        disk = _shutil.disk_usage(str(idir.parent if idir.exists() else "."))
+    except Exception:
+        disk = type("D", (), {"total": 0, "free": 0})()
+    result = {
+        "total_bytes": 0,
+        "breakdown": {},
         "disk_total_gb": round(disk.total / 1e9, 1),
         "disk_free_gb": round(disk.free / 1e9, 1),
         "quotas": {},
-        "usage": {"total_mb": round(total_bytes / 1e6, 1)},
+        "usage": {"total_mb": 0},
     }
+    if idir.exists():
+        try:
+            total = 0
+            breakdown = {}
+            for sub in idir.iterdir():
+                if sub.is_dir():
+                    size = sum(f.stat().st_size for f in sub.rglob("*") if f.is_file())
+                    breakdown[sub.name] = round(size / 1e6, 1)
+                    total += size
+            result["total_bytes"] = total
+            result["breakdown"] = breakdown
+            result["usage"]["total_mb"] = round(total / 1e6, 1)
+        except Exception:
+            pass
+    _storage_cache[instance_id] = (now, result)
+    return result
 
 
 @app.get("/api/servers/{instance_id}/memory")

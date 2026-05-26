@@ -83,9 +83,9 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
 
         await ensure_steamcmd()
 
-        _write_log("Running SteamCMD self-update (first run may take a minute)...", instance_id)
-        await _run_steamcmd([str(STEAMCMD_EXE), "+login", "anonymous", "+quit"], "SteamCMD init")
-        _write_log("SteamCMD initialized.", instance_id)
+        _write_log("Running SteamCMD self-update...", instance_id)
+        await _run_steamcmd([str(STEAMCMD_EXE), "+quit"], "SteamCMD update")
+        _write_log("SteamCMD ready.", instance_id)
 
         server_exe = srv_dir / "ArmaReforgerServer.exe"
         if server_exe.exists() and not force:
@@ -99,8 +99,8 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
         _write_log(f"Install dir: {install_dir}", instance_id)
         _write_log("This will download ~2 GB. Please wait...", instance_id)
 
-        for attempt in range(1, 4):
-            _write_log(f"Install attempt {attempt}/3...", instance_id)
+        for attempt in range(1, 6):
+            _write_log(f"Install attempt {attempt}/5...", instance_id)
             result = await _run_steamcmd(
                 [
                     str(STEAMCMD_EXE),
@@ -113,11 +113,13 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
             )
             if result["returncode"] == 0:
                 break
-            if attempt < 3:
-                _write_log(f"Attempt {attempt} failed (code {result['returncode']}), retrying...", instance_id)
+            if attempt < 5:
+                import asyncio as _aio
+                _write_log(f"Attempt {attempt} failed (code {result['returncode']}), retrying in 3s...", instance_id)
+                await _aio.sleep(3)
 
         if result["returncode"] != 0:
-            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']} after 3 attempts", instance_id)
+            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']} after 5 attempts", instance_id)
             _install_state = {"status": "error", "error": f"SteamCMD exit code {result['returncode']}"}
             return
 
