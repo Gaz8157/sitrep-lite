@@ -403,7 +403,7 @@ export default function ServerPicker({
           >
             {visibleInstances.map(inst => {
               const id = inst.id ?? inst.instance_id
-              const running = !!(inst.running || inst.state === "running")
+              const running = !!(inst.running || inst.state === "active" || inst.state === "running")
               const dotColor = running ? C.accent : (inst.connection_status === "offline" ? C.red : "#eab308")
               const label = inst.display_name || inst.name
               return (
