@@ -84,10 +84,9 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
         await ensure_steamcmd()
 
         _write_log("Running SteamCMD self-update (first run may take a minute)...", instance_id)
-        result = await _run_steamcmd(
-            [str(STEAMCMD_EXE), "+quit"],
-            "SteamCMD self-update",
-        )
+        await _run_steamcmd([str(STEAMCMD_EXE), "+quit"], "SteamCMD self-update")
+        _write_log("Running SteamCMD self-update pass 2...", instance_id)
+        await _run_steamcmd([str(STEAMCMD_EXE), "+quit"], "SteamCMD self-update 2")
 
         server_exe = srv_dir / "ArmaReforgerServer.exe"
         if server_exe.exists() and not force:
@@ -96,22 +95,30 @@ async def _install_bg(force: bool = False, instance_id: int | None = None) -> No
             return
 
         srv_dir.mkdir(parents=True, exist_ok=True)
+        install_dir = str(srv_dir).replace("/", "\\")
         _write_log(f"Installing Arma Reforger Dedicated Server (App ID {REFORGER_APP_ID})...", instance_id)
+        _write_log(f"Install dir: {install_dir}", instance_id)
         _write_log("This will download ~2 GB. Please wait...", instance_id)
 
-        result = await _run_steamcmd(
-            [
-                str(STEAMCMD_EXE),
-                "+force_install_dir", str(srv_dir),
-                "+login", "anonymous",
-                "+app_update", str(REFORGER_APP_ID), "validate",
-                "+quit",
-            ],
-            "Server install",
-        )
+        for attempt in range(1, 4):
+            _write_log(f"Install attempt {attempt}/3...", instance_id)
+            result = await _run_steamcmd(
+                [
+                    str(STEAMCMD_EXE),
+                    "+force_install_dir", install_dir,
+                    "+login", "anonymous",
+                    "+app_update", str(REFORGER_APP_ID), "validate",
+                    "+quit",
+                ],
+                f"Server install (attempt {attempt})",
+            )
+            if result["returncode"] == 0:
+                break
+            if attempt < 3:
+                _write_log(f"Attempt {attempt} failed (code {result['returncode']}), retrying...", instance_id)
 
         if result["returncode"] != 0:
-            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']}", instance_id)
+            _write_log(f"ERROR: SteamCMD exited with code {result['returncode']} after 3 attempts", instance_id)
             _install_state = {"status": "error", "error": f"SteamCMD exit code {result['returncode']}"}
             return
 

@@ -81,6 +81,11 @@ function SetupWizard({ onDone }) {
       })
       const d = await r.json()
       if (d.error) { setError(d.error); return }
+      await fetch("/api/auth/login", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, remember: true }),
+      })
       onDone()
     } catch { setError("Failed to create account") }
     finally { setLoading(false) }
