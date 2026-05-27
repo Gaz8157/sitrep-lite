@@ -143,10 +143,14 @@ def set_cpu_affinity(instance_id: int, payload: dict[str, Any], pid: int | None)
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as exc:
             log.warning("Failed to set CPU affinity on pid %d: %s", pid, exc)
 
+    total = psutil.cpu_count(logical=True) or 1
     return {
         "mode": mode,
         "cpu_list": cpu_list_str,
         "applied": applied,
+        "total_cores": total,
+        "all_cores": list(range(total)),
+        "pinned_cores": cpus,
         "topology": _build_topology(),
     }
 
