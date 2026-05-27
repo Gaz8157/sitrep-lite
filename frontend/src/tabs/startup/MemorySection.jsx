@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useT } from "../../ctx.jsx"
 import { apiGet, apiPut, APIError } from "../../api/index.js"
 import { Btn, Bar } from "../../components/index.js"
@@ -10,22 +10,23 @@ export default function MemorySection({ instance, toast }) {
   const [budgetGB, setBudgetGB] = useState("")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const initialized = useRef(false)
 
   const load = useCallback(async () => {
     if (id == null) return
-    setLoading(true)
     try {
       const live = await apiGet(`/api/servers/${id}/memory/live`)
       setData(live)
-      if (budgetGB === "" && live.budget_mb) {
+      if (!initialized.current && live.budget_mb) {
         setBudgetGB((live.budget_mb / 1024).toFixed(1))
+        initialized.current = true
       }
     } catch (e) {
       if (e instanceof APIError) toast?.(e.message, "danger")
     } finally { setLoading(false) }
   }, [id, toast])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { initialized.current = false; load() }, [load])
   useEffect(() => {
     if (id == null) return
     const iv = setInterval(load, 5000)
@@ -33,12 +34,14 @@ export default function MemorySection({ instance, toast }) {
   }, [id, load])
 
   const save = async () => {
-    const mb = Math.round(parseFloat(budgetGB) * 1024)
-    if (isNaN(mb) || mb < 0) { toast?.("Invalid budget", "danger"); return }
+    const gb = parseFloat(budgetGB)
+    if (isNaN(gb) || gb < 0) { toast?.("Enter a valid number", "danger"); return }
+    const mb = Math.round(gb * 1024)
     setSaving(true)
     try {
       await apiPut(`/api/servers/${id}/memory`, { budget_mb: mb, ceiling_mb: mb })
-      toast?.(`Memory budget set to ${budgetGB} GB`)
+      toast?.(`Memory budget set to ${gb.toFixed(1)} GB`)
+      initialized.current = false
       load()
     } catch (e) {
       toast?.(e instanceof APIError ? e.message : String(e), "danger")
@@ -96,6 +99,7 @@ export default function MemorySection({ instance, toast }) {
             max={totalGB.toFixed(0)}
             value={budgetGB}
             onChange={e => setBudgetGB(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && save()}
             className="rounded-lg px-3 py-1.5 outline-none font-mono"
             style={{
               background: C.bg, border: `1px solid ${C.border}`,
