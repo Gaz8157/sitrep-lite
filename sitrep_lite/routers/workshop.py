@@ -1,4 +1,9 @@
-"""Workshop router — proxies Bohemia Reforger Workshop directly (no agent)."""
+"""Workshop router — proxies Bohemia Reforger Workshop directly (no agent).
+
+Workshop API responses are cached in SQLite (L2) with a small bounded
+in-memory LRU (L1) for hot entries. This keeps the panel snappy without
+bloating process RSS over time.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +11,9 @@ import json
 import math
 import os
 import re
+import sqlite3
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Final
 
@@ -24,6 +31,7 @@ _READ_ROLES = ("owner", "head_admin", "admin", "moderator", "viewer", "demo")
 CACHE_DIR = DATA_DIR / "cache"
 THUMB_DIR = DATA_DIR / "cache" / "workshop-thumbs"
 WS_INDEX_PATH = DATA_DIR / "cache" / "ws_index.json"
+WS_CACHE_DB_PATH = DATA_DIR / "cache" / "ws_cache.db"
 
 WS_CACHE_TTL_SEARCH: Final[float] = 300.0
 WS_CACHE_TTL_MOD: Final[float] = 3600.0
@@ -31,12 +39,17 @@ WS_BUILD_ID_TTL: Final[float] = 3600.0
 THUMB_MAX_AGE: Final[float] = 7 * 86400
 THUMB_CAP_BYTES: Final[int] = 500 * 1024 * 1024
 
+_L1_MAX: Final[int] = 32
+_SWEEP_EVERY: Final[int] = 50
+
 _BOHEMIA_BASE: Final[str] = "https://reforger.armaplatform.com"
 _FALLBACK_BUILD_ID: Final[str] = "8cIQrfsP0mdy2y8uLb1ix"
 
 _GUID_RE = re.compile(r"^[0-9A-F]{16}$")
 
-_ws_cache: dict[str, dict[str, Any]] = {}
+_l1_cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+_cache_db: sqlite3.Connection | None = None
+_cache_writes: int = 0
 _ws_build_id: str = ""
 _ws_build_id_ts: float = 0.0
 
@@ -49,27 +62,93 @@ _thumb_fetch_sem = asyncio.Semaphore(8)
 _prefetch_inflight: set[str] = set()
 
 
-# -- helpers ------------------------------------------------------------------
+# Shared HTTP client — reused across all requests.
+_shared_http: httpx.AsyncClient | None = None
+
+
+# -- SQLite L2 cache ---------------------------------------------------------
+
+
+def _get_cache_db() -> sqlite3.Connection:
+    global _cache_db
+    if _cache_db is not None:
+        return _cache_db
+    _ensure_dirs()
+    _cache_db = sqlite3.connect(str(WS_CACHE_DB_PATH))
+    _cache_db.execute("PRAGMA journal_mode=WAL")
+    _cache_db.execute("PRAGMA synchronous=NORMAL")
+    _cache_db.execute(
+        "CREATE TABLE IF NOT EXISTS cache"
+        " (key TEXT PRIMARY KEY, data TEXT NOT NULL, ts REAL NOT NULL)"
+    )
+    _cache_db.commit()
+    return _cache_db
+
 
 def _cache_get(key: str, ttl: float) -> Any | None:
-    e = _ws_cache.get(key)
-    if e and time.time() - e["ts"] < ttl:
-        return e["data"]
-    if e:
-        _ws_cache.pop(key, None)
+    entry = _l1_cache.get(key)
+    if entry is not None:
+        ts, data = entry
+        if time.time() - ts < ttl:
+            _l1_cache.move_to_end(key)
+            return data
+        _l1_cache.pop(key, None)
+
+    db = _get_cache_db()
+    row = db.execute("SELECT data, ts FROM cache WHERE key = ?", (key,)).fetchone()
+    if row is not None:
+        data_json, ts = row
+        if time.time() - ts < ttl:
+            data = json.loads(data_json)
+            _l1_cache[key] = (ts, data)
+            if len(_l1_cache) > _L1_MAX:
+                _l1_cache.popitem(last=False)
+            return data
+        db.execute("DELETE FROM cache WHERE key = ?", (key,))
+        db.commit()
     return None
 
 
 def _cache_set(key: str, data: Any) -> None:
-    _ws_cache[key] = {"data": data, "ts": time.time()}
+    global _cache_writes
+    now = time.time()
+
+    _l1_cache[key] = (now, data)
+    if len(_l1_cache) > _L1_MAX:
+        _l1_cache.popitem(last=False)
+
+    db = _get_cache_db()
+    db.execute(
+        "INSERT OR REPLACE INTO cache (key, data, ts) VALUES (?, ?, ?)",
+        (key, json.dumps(data), now),
+    )
+    db.commit()
+
+    _cache_writes += 1
+    if _cache_writes >= _SWEEP_EVERY:
+        _cache_writes = 0
+        _cache_sweep()
+
+
+def _cache_sweep() -> None:
+    cutoff = time.time() - max(WS_CACHE_TTL_SEARCH, WS_CACHE_TTL_MOD)
+    db = _get_cache_db()
+    db.execute("DELETE FROM cache WHERE ts < ?", (cutoff,))
+    db.commit()
+
+
+# -- HTTP helpers -------------------------------------------------------------
 
 
 def _http_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=15,
-        follow_redirects=True,
-        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-    )
+    global _shared_http
+    if _shared_http is None or _shared_http.is_closed:
+        _shared_http = httpx.AsyncClient(
+            timeout=15,
+            follow_redirects=True,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _shared_http
 
 
 async def _get_build_id() -> str:
@@ -77,13 +156,13 @@ async def _get_build_id() -> str:
     if _ws_build_id and time.time() - _ws_build_id_ts < WS_BUILD_ID_TTL:
         return _ws_build_id
     try:
-        async with _http_client() as c:
-            r = await c.get(f"{_BOHEMIA_BASE}/workshop")
-            m = re.search(r'"buildId":"([^"]+)"', r.text)
-            if m:
-                _ws_build_id = m.group(1)
-                _ws_build_id_ts = time.time()
-                return _ws_build_id
+        c = _http_client()
+        r = await c.get(f"{_BOHEMIA_BASE}/workshop")
+        m = re.search(r'"buildId":"([^"]+)"', r.text)
+        if m:
+            _ws_build_id = m.group(1)
+            _ws_build_id_ts = time.time()
+            return _ws_build_id
     except Exception:
         pass
     return _ws_build_id or _FALLBACK_BUILD_ID
@@ -94,18 +173,18 @@ async def _fetch_search_page(build_id: str, q: str, page: int, sort: str) -> dic
     if q:
         params["search"] = q
     url = f"{_BOHEMIA_BASE}/_next/data/{build_id}/workshop.json"
-    async with _http_client() as c:
-        r = await c.get(url, params=params)
-        r.raise_for_status()
-        return r.json()
+    c = _http_client()
+    r = await c.get(url, params=params)
+    r.raise_for_status()
+    return r.json()
 
 
 async def _fetch_mod_detail_raw(build_id: str, mod_id: str) -> dict[str, Any]:
     url = f"{_BOHEMIA_BASE}/_next/data/{build_id}/workshop/{mod_id}.json"
-    async with _http_client() as c:
-        r = await c.get(url)
-        r.raise_for_status()
-        return r.json()
+    c = _http_client()
+    r = await c.get(url)
+    r.raise_for_status()
+    return r.json()
 
 
 def _simplify_mod(mod: dict[str, Any]) -> dict[str, Any]:
@@ -184,18 +263,18 @@ async def _prefetch_thumb_direct(mod_id: str, image_url: str) -> None:
     try:
         _ensure_dirs()
         async with _thumb_fetch_sem:
-            async with _http_client() as c:
-                r = await c.get(image_url)
-                if r.status_code == 404:
-                    try:
-                        path.write_bytes(b"")
-                    except OSError:
-                        pass
-                    return
-                r.raise_for_status()
-                tmp = path.with_suffix(".tmp")
-                tmp.write_bytes(r.content)
-                os.replace(tmp, path)
+            c = _http_client()
+            r = await c.get(image_url)
+            if r.status_code == 404:
+                try:
+                    path.write_bytes(b"")
+                except OSError:
+                    pass
+                return
+            r.raise_for_status()
+            tmp = path.with_suffix(".tmp")
+            tmp.write_bytes(r.content)
+            os.replace(tmp, path)
     except Exception:
         pass
     finally:
@@ -238,10 +317,10 @@ async def _build_ws_index_bg() -> None:
         async def fetch_page(sort: str, page: int) -> list[dict[str, Any]]:
             async with sem:
                 try:
-                    async with _http_client() as c:
-                        r = await c.get(base_url, params={"page": page, "sort": sort})
-                        r.raise_for_status()
-                        raw = r.json()
+                    c = _http_client()
+                    r = await c.get(base_url, params={"page": page, "sort": sort})
+                    r.raise_for_status()
+                    raw = r.json()
                     pp = raw.get("pageProps", raw.get("props", {}).get("pageProps", {}))
                     return [
                         _simplify_mod(m)
@@ -549,18 +628,18 @@ async def get_thumb(
 
     async with _thumb_fetch_sem:
         try:
-            async with _http_client() as c:
-                r = await c.get(image_url)
-                if r.status_code == 404:
-                    try:
-                        path.write_bytes(b"")
-                    except OSError:
-                        pass
-                    raise HTTPException(status_code=404, detail="no thumbnail")
-                r.raise_for_status()
-                tmp = path.with_suffix(".tmp")
-                tmp.write_bytes(r.content)
-                os.replace(tmp, path)
+            c = _http_client()
+            r = await c.get(image_url)
+            if r.status_code == 404:
+                try:
+                    path.write_bytes(b"")
+                except OSError:
+                    pass
+                raise HTTPException(status_code=404, detail="no thumbnail")
+            r.raise_for_status()
+            tmp = path.with_suffix(".tmp")
+            tmp.write_bytes(r.content)
+            os.replace(tmp, path)
         except HTTPException:
             raise
         except Exception as e:
