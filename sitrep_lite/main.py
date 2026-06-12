@@ -7,19 +7,24 @@ import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import FileResponse, HTMLResponse
 
 from .db.panel import migrate as panel_migrate
 from .db.state import migrate as state_migrate
+from .deps import require_role
 from .paths import FRONTEND_DIST, ensure_dirs
 from .routers import auth, audit, scheduler, server, settings, system, users, webhooks, workshop
+from .services.http_client import aclose_shared_client
 
 log = logging.getLogger(__name__)
 
 _BOOT_TS = time.time()
+
+_READ_ROLES = ("owner", "head_admin", "admin", "moderator", "viewer", "demo")
+_ADMIN_ROLES = ("owner", "head_admin", "admin")
 
 
 class SPAStaticFiles(StaticFiles):
@@ -49,6 +54,7 @@ async def lifespan(app: FastAPI):
     yield
     log.info("Shutting down -- stopping all server instances")
     stop_all()
+    await aclose_shared_client()
 
 
 app = FastAPI(title="SITREP Lite", version="1.0.0", lifespan=lifespan)
@@ -69,36 +75,49 @@ def health() -> dict:
 
 
 import json as _json_mod
-from .paths import DATA_DIR
+import os as _os_mod
+import threading as _threading_mod
 
-_PACKAGES_FILE = DATA_DIR / "packages.json"
+from fastapi import HTTPException
+
+from . import paths as _paths_mod
+
+_pkg_lock = _threading_mod.Lock()
+
+
+def _packages_file() -> Path:
+    return _paths_mod.DATA_DIR / "packages.json"
 
 
 def _load_packages() -> list:
-    if _PACKAGES_FILE.exists():
+    f = _packages_file()
+    if f.exists():
         try:
-            return _json_mod.loads(_PACKAGES_FILE.read_text())
+            return _json_mod.loads(f.read_text())
         except Exception:
-            pass
+            log.warning("packages.json unreadable — treating as empty")
     return []
 
 
 def _save_packages(pkgs: list) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _PACKAGES_FILE.write_text(_json_mod.dumps(pkgs, indent=2))
+    f = _packages_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(_json_mod.dumps(pkgs, indent=2))
+    _os_mod.replace(tmp, f)
 
 
 @app.get("/api/packages")
-def packages_list() -> dict:
+def packages_list(user=Depends(require_role(*_READ_ROLES))) -> dict:
     return {"packages": _load_packages()}
 
 
 @app.post("/api/packages")
-def packages_create(payload: dict) -> dict:
+def packages_create(payload: dict, user=Depends(require_role(*_ADMIN_ROLES))) -> dict:
     instance_id = payload.get("instance_id")
-    name = payload.get("name", "").strip()
+    name = (payload.get("name") or "").strip()
     if not name:
-        return {"error": "name required"}
+        raise HTTPException(status_code=400, detail="name required")
     mods = []
     if instance_id is not None:
         from .paths import instance_config
@@ -112,42 +131,47 @@ def packages_create(payload: dict) -> dict:
                         for m in raw_mods]
             except Exception:
                 pass
-    pkgs = _load_packages()
-    new_id = max((p.get("id", 0) for p in pkgs), default=0) + 1
-    pkg = {"id": new_id, "name": name, "mods": mods, "created_ts": int(time.time())}
-    pkgs.append(pkg)
-    _save_packages(pkgs)
+    with _pkg_lock:
+        pkgs = _load_packages()
+        new_id = max((p.get("id", 0) for p in pkgs), default=0) + 1
+        pkg = {"id": new_id, "name": name, "mods": mods, "created_ts": int(time.time())}
+        pkgs.append(pkg)
+        _save_packages(pkgs)
     return pkg
 
 
 @app.post("/api/packages/{pkg_id}/apply")
-def packages_apply(pkg_id: int, payload: dict) -> dict:
+def packages_apply(pkg_id: int, payload: dict, user=Depends(require_role(*_ADMIN_ROLES))) -> dict:
     instance_id = payload.get("instance_id")
     if instance_id is None:
-        return {"error": "instance_id required"}
-    pkgs = _load_packages()
-    pkg = next((p for p in pkgs if p.get("id") == pkg_id), None)
-    if not pkg:
-        return {"error": "package not found"}
-    from .paths import instance_config
-    from .engine.config import write_config, read_config
-    cfg = read_config(instance_id=instance_id)
-    cfg.setdefault("game", {})["mods"] = [
-        {"modId": m.get("mod_guid") or m.get("modId", ""),
-         "name": m.get("name", ""), "version": m.get("version", "")}
-        for m in pkg.get("mods", [])
-    ]
-    write_config(cfg, instance_id=instance_id)
-    pkg["last_applied_at"] = int(time.time())
-    _save_packages(pkgs)
+        raise HTTPException(status_code=400, detail="instance_id required")
+    from .engine.config import ConfigWipeError, write_config, read_config
+    with _pkg_lock:
+        pkgs = _load_packages()
+        pkg = next((p for p in pkgs if p.get("id") == pkg_id), None)
+        if not pkg:
+            raise HTTPException(status_code=404, detail="package not found")
+        cfg = read_config(instance_id=instance_id)
+        cfg.setdefault("game", {})["mods"] = [
+            {"modId": m.get("mod_guid") or m.get("modId", ""),
+             "name": m.get("name", ""), "version": m.get("version", "")}
+            for m in pkg.get("mods", [])
+        ]
+        try:
+            write_config(cfg, instance_id=instance_id)
+        except ConfigWipeError as e:
+            raise HTTPException(status_code=409, detail={"blocked": e.reasons})
+        pkg["last_applied_at"] = int(time.time())
+        _save_packages(pkgs)
     return {"message": f'Applied "{pkg["name"]}" ({len(pkg.get("mods", []))} mods)', "name": pkg["name"]}
 
 
 @app.delete("/api/packages/{pkg_id}")
-def packages_delete(pkg_id: int) -> dict:
-    pkgs = _load_packages()
-    pkgs = [p for p in pkgs if p.get("id") != pkg_id]
-    _save_packages(pkgs)
+def packages_delete(pkg_id: int, user=Depends(require_role(*_ADMIN_ROLES))) -> dict:
+    with _pkg_lock:
+        pkgs = _load_packages()
+        pkgs = [p for p in pkgs if p.get("id") != pkg_id]
+        _save_packages(pkgs)
     return {"deleted": pkg_id}
 
 
@@ -164,7 +188,7 @@ def _dir_size(path: Path) -> int:
 
 
 @app.get("/api/servers/{instance_id}/storage")
-def storage_info(instance_id: int) -> dict:
+def storage_info(instance_id: int, user=Depends(require_role(*_READ_ROLES))) -> dict:
     import json as _json
     import shutil as _shutil
 
@@ -229,25 +253,26 @@ def storage_info(instance_id: int) -> dict:
 
 
 @app.get("/api/servers/{instance_id}/memory")
-def memory_settings_get(instance_id: int) -> dict:
+def memory_settings_get(instance_id: int, user=Depends(require_role(*_READ_ROLES))) -> dict:
     from .engine.resources import get_memory_settings
     return get_memory_settings(instance_id)
 
 
 @app.put("/api/servers/{instance_id}/memory")
-def memory_settings_put(instance_id: int, payload: dict) -> dict:
+def memory_settings_put(instance_id: int, payload: dict,
+                        user=Depends(require_role(*_ADMIN_ROLES))) -> dict:
     from .engine.resources import set_memory_settings
     return set_memory_settings(instance_id, payload)
 
 
 @app.delete("/api/servers/{instance_id}/memory")
-def memory_settings_reset(instance_id: int) -> dict:
+def memory_settings_reset(instance_id: int, user=Depends(require_role(*_ADMIN_ROLES))) -> dict:
     from .engine.resources import reset_memory_settings
     return reset_memory_settings(instance_id)
 
 
 @app.get("/api/servers/{instance_id}/memory/live")
-def memory_live(instance_id: int) -> dict:
+def memory_live(instance_id: int, user=Depends(require_role(*_READ_ROLES))) -> dict:
     from .engine.resources import get_memory_live
     from .engine.instance_manager import get_engine
     engine = get_engine(instance_id)
@@ -256,19 +281,20 @@ def memory_live(instance_id: int) -> dict:
 
 
 @app.get("/api/servers/memory-topology")
-def memory_topology() -> dict:
+def memory_topology(user=Depends(require_role(*_READ_ROLES))) -> dict:
     from .engine.resources import get_memory_topology
     return get_memory_topology()
 
 
 @app.get("/api/servers/{instance_id}/cpu-affinity")
-def cpu_affinity_get(instance_id: int) -> dict:
+def cpu_affinity_get(instance_id: int, user=Depends(require_role(*_READ_ROLES))) -> dict:
     from .engine.resources import get_cpu_affinity
     return get_cpu_affinity(instance_id)
 
 
 @app.put("/api/servers/{instance_id}/cpu-affinity")
-def cpu_affinity_put(instance_id: int, payload: dict) -> dict:
+def cpu_affinity_put(instance_id: int, payload: dict,
+                     user=Depends(require_role(*_ADMIN_ROLES))) -> dict:
     from .engine.resources import set_cpu_affinity
     from .engine.instance_manager import get_engine
     engine = get_engine(instance_id)

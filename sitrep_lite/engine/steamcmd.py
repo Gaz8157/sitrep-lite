@@ -7,13 +7,13 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from ..paths import STEAMCMD_DIR, STEAMCMD_EXE, SERVER_DIR, PROFILE_DIR, REFORGER_APP_ID, instance_server, instance_profile
+from ..services.http_client import shared_client
 
 log = logging.getLogger(__name__)
 
 STEAMCMD_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
+STEAMCMD_TIMEOUT_SEC = 2 * 60 * 60
 
 _install_state: dict[str, Any] = {"status": "idle"}
 _install_task: asyncio.Task | None = None
@@ -40,9 +40,8 @@ async def ensure_steamcmd() -> dict[str, Any]:
         return {"state": "ready", "path": str(STEAMCMD_EXE)}
     STEAMCMD_DIR.mkdir(parents=True, exist_ok=True)
     _write_log("Downloading SteamCMD...")
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.get(STEAMCMD_URL, follow_redirects=True)
-        resp.raise_for_status()
+    resp = await shared_client().get(STEAMCMD_URL, timeout=60)
+    resp.raise_for_status()
     zip_path = STEAMCMD_DIR / "steamcmd.zip"
     zip_path.write_bytes(resp.content)
     _write_log(f"Downloaded {len(resp.content)} bytes, extracting...")
@@ -56,13 +55,21 @@ async def ensure_steamcmd() -> dict[str, Any]:
 async def _run_steamcmd(args: list[str], label: str, instance_id: int | None = None) -> dict[str, Any]:
     _write_log(f"Running: steamcmd {' '.join(args[1:])}", instance_id)
     log_file = open(_log_path(instance_id), "a", encoding="utf-8", errors="replace")
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=log_file,
-        stderr=log_file,
-    )
-    await proc.wait()
-    log_file.close()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=log_file,
+            stderr=log_file,
+        )
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=STEAMCMD_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            _write_log(f"{label} timed out after {STEAMCMD_TIMEOUT_SEC}s — killed", instance_id)
+            return {"returncode": -1}
+    finally:
+        log_file.close()
     _write_log(f"{label} finished with exit code {proc.returncode}", instance_id)
     return {"returncode": proc.returncode}
 

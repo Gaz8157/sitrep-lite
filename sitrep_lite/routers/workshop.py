@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, Response
 
 from ..deps import require_role
 from ..paths import DATA_DIR
+from ..services.http_client import shared_client
 
 router = APIRouter(prefix="/api/workshop", tags=["workshop"])
 
@@ -61,9 +62,15 @@ _ws_index_task: asyncio.Task | None = None
 _thumb_fetch_sem = asyncio.Semaphore(8)
 _prefetch_inflight: set[str] = set()
 
+# Strong refs to fire-and-forget tasks — bare create_task results can be
+# garbage-collected mid-flight.
+_bg_tasks: set[asyncio.Task] = set()
 
-# Shared HTTP client — reused across all requests.
-_shared_http: httpx.AsyncClient | None = None
+
+def _track(task: asyncio.Task) -> asyncio.Task:
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
 
 
 # -- SQLite L2 cache ---------------------------------------------------------
@@ -141,14 +148,7 @@ def _cache_sweep() -> None:
 
 
 def _http_client() -> httpx.AsyncClient:
-    global _shared_http
-    if _shared_http is None or _shared_http.is_closed:
-        _shared_http = httpx.AsyncClient(
-            timeout=15,
-            follow_redirects=True,
-            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-        )
-    return _shared_http
+    return shared_client()
 
 
 async def _get_build_id() -> str:
@@ -286,7 +286,7 @@ def _schedule_prefetch(mods_list: list[dict[str, Any]]) -> None:
         mid = m.get("id")
         img = m.get("image")
         if isinstance(mid, str) and _GUID_RE.match(mid) and isinstance(img, str) and img:
-            asyncio.create_task(_prefetch_thumb_direct(mid, img))
+            _track(asyncio.create_task(_prefetch_thumb_direct(mid, img)))
 
 
 def _load_ws_index_from_disk() -> None:

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useT } from "../../ctx.jsx"
 import { apiGet, apiPost, apiDelete, APIError } from "../../api/index.js"
 import { Btn, Card, Empty } from "../../components/index.js"
@@ -24,66 +24,80 @@ export default function DeploymentsPanel({ instanceId, modCount, onApplied, toas
   const [loading, setLoading] = useState(true)
   const [pkgName, setPkgName] = useState("")
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const loadSeq = useRef(0)
 
   const load = async () => {
+    const seq = ++loadSeq.current
     setLoading(true)
     try {
       const r = await apiGet(`/api/packages`)
+      if (seq !== loadSeq.current) return
       const list = r?.packages || r?.items || (Array.isArray(r) ? r : [])
       setPkgs(Array.isArray(list) ? list : [])
     } catch (e) {
-      toast?.(asErr(e), "danger")
+      if (seq === loadSeq.current) toast?.(asErr(e), "danger")
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
   }
 
   useEffect(() => { load() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [])
 
+  const lock = () => {
+    if (busyRef.current) return false
+    busyRef.current = true
+    setBusy(true)
+    return true
+  }
+
+  const unlock = () => {
+    busyRef.current = false
+    setBusy(false)
+  }
+
   const save = async () => {
     const name = pkgName.trim()
     if (!name) { toast?.("Name required", "danger"); return }
     if (instanceId == null) { toast?.("No server selected", "danger"); return }
-    if (busy) return
-    setBusy(true)
+    if (!lock()) return
     try {
       await apiPost(`/api/packages`, { instance_id: instanceId, name })
       toast?.(`Saved "${name}" to library`)
       setPkgName("")
-      load()
+      await load()
     } catch (e) {
       toast?.(asErr(e), "danger")
     } finally {
-      setBusy(false)
+      unlock()
     }
   }
 
   const apply = async (id) => {
-    if (busy || instanceId == null) return
-    setBusy(true)
+    if (instanceId == null) return
+    if (!lock()) return
     try {
       const r = await apiPost(`/api/packages/${id}/apply`, { instance_id: instanceId })
       toast?.(r?.message || `Applied "${r?.name || id}"`, "info")
       onApplied?.()
-      load()
+      await load()
     } catch (e) {
       toast?.(asErr(e), "danger")
     } finally {
-      setBusy(false)
+      unlock()
     }
   }
 
   const del = async (id) => {
-    if (busy) return
-    setBusy(true)
+    if (!lock()) return
     try {
       await apiDelete(`/api/packages/${id}`)
       toast?.("Deleted", "warning")
-      load()
+      await load()
     } catch (e) {
       toast?.(asErr(e), "danger")
     } finally {
-      setBusy(false)
+      unlock()
     }
   }
 

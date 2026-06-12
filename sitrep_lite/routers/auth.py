@@ -20,6 +20,7 @@ from ..repos import (
 )
 from ..services import auth_service, discord_service, smtp_service, totp_service
 from ..services.password_hash import hash_password, verify_password
+from ..services.rate_limit import enforce
 from ..services.runtime_settings import integrations
 from ..services.settings import settings
 
@@ -115,6 +116,7 @@ async def public_config() -> dict:
 
 @router.post("/login")
 async def login(body: LoginIn, request: Request, response: Response) -> dict:
+    enforce("login", get_client_ip(request), limit=10, window=60)
     user = users_repo.find_by_username(body.username)
     if not user or user.get("disabled") or not verify_password(body.password, user["password_hash"]):
         await asyncio.sleep(uniform(0.1, 0.3))
@@ -128,6 +130,7 @@ async def login(body: LoginIn, request: Request, response: Response) -> dict:
 
 @router.post("/2fa/verify")
 async def totp_verify(body: TotpVerifyIn, request: Request, response: Response) -> dict:
+    enforce("2fa", get_client_ip(request), limit=10, window=60)
     row = pending_2fa_repo.consume(body.pending_token)
     if not row:
         raise HTTPException(status_code=401, detail="invalid_or_expired_token")
@@ -191,7 +194,8 @@ async def me(request: Request) -> dict:
 
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotIn, background: BackgroundTasks) -> dict:
+async def forgot_password(body: ForgotIn, request: Request, background: BackgroundTasks) -> dict:
+    enforce("forgot", get_client_ip(request), limit=5, window=300)
     user = users_repo.find_by_email(body.email)
     if user:
         token = password_resets_repo.create(user["id"],
@@ -204,7 +208,8 @@ async def forgot_password(body: ForgotIn, background: BackgroundTasks) -> dict:
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetIn) -> dict:
+async def reset_password(body: ResetIn, request: Request) -> dict:
+    enforce("reset", get_client_ip(request), limit=10, window=300)
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="password_too_short")
     row = password_resets_repo.get(body.token)
@@ -227,7 +232,10 @@ async def totp_setup(request: Request) -> dict:
     backup = totp_service.generate_backup_codes()
     users_repo.update(
         user["id"], totp_secret=None,
-        totp_backup_codes=json.dumps({"pending_secret": secret, "pending_codes": backup}),
+        totp_backup_codes=json.dumps({
+            "pending_secret": secret,
+            "pending_codes": totp_service.hash_backup_codes(backup),
+        }),
     )
     return {"provisioning_uri": uri, "backup_codes": backup}
 

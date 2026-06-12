@@ -5,13 +5,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from ..paths import STATE_DB
+from .. import paths
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations" / "state"
 
 
 def _connect(path: str | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or str(STATE_DB), isolation_level=None, check_same_thread=False)
+    conn = sqlite3.connect(path or str(paths.STATE_DB), isolation_level=None, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
@@ -20,7 +20,7 @@ def _connect(path: str | None = None) -> sqlite3.Connection:
 
 
 def migrate(path: str | None = None) -> int:
-    target = path or str(STATE_DB)
+    target = path or str(paths.STATE_DB)
     Path(target).parent.mkdir(parents=True, exist_ok=True)
     autocommit = _connect(target)
     try:
@@ -55,7 +55,7 @@ def migrate(path: str | None = None) -> int:
 
 @contextmanager
 def get_conn(path: str | None = None) -> Iterator[sqlite3.Connection]:
-    conn = _connect(path or str(STATE_DB))
+    conn = _connect(path or str(paths.STATE_DB))
     try:
         yield conn
     finally:

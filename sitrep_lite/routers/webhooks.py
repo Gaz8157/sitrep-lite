@@ -85,12 +85,11 @@ async def test_fire(instance_id: int, webhook_id: int,
         row = conn.execute("SELECT * FROM webhooks WHERE id=?", (webhook_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="webhook not found")
-    import httpx
+    from ..services.http_client import shared_client
     payload = {"content": f"SITREP Lite test fire from webhook '{row['name']}'"}
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(row["url"], json=payload, timeout=10)
-            status = resp.status_code
+        resp = await shared_client().post(row["url"], json=payload, timeout=10)
+        status = resp.status_code
     except Exception:
         status = 0
     with get_conn() as conn:

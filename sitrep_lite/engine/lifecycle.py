@@ -5,6 +5,7 @@ import logging
 import signal
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 
@@ -27,6 +28,7 @@ class ServerLifecycle:
         self._state = ServerState.STOPPED
         self._start_time: float | None = None
         self._log_file = None
+        self._lock = threading.RLock()
 
     @property
     def state(self) -> ServerState:
@@ -35,8 +37,9 @@ class ServerLifecycle:
 
     @property
     def pid(self) -> int | None:
-        if self._process is not None and self._process.poll() is None:
-            return self._process.pid
+        proc = self._process
+        if proc is not None and proc.poll() is None:
+            return proc.pid
         return None
 
     @property
@@ -54,15 +57,16 @@ class ServerLifecycle:
             self._log_file = None
 
     def _poll(self) -> None:
-        if self._process is None:
-            self._state = ServerState.STOPPED
-            return
-        rc = self._process.poll()
-        if rc is not None:
-            self._state = ServerState.STOPPED
-            self._process = None
-            self._start_time = None
-            self._close_log()
+        with self._lock:
+            if self._process is None:
+                self._state = ServerState.STOPPED
+                return
+            rc = self._process.poll()
+            if rc is not None:
+                self._state = ServerState.STOPPED
+                self._process = None
+                self._start_time = None
+                self._close_log()
 
     def status(self) -> dict[str, Any]:
         self._poll()
@@ -87,52 +91,63 @@ class ServerLifecycle:
         return result
 
     def start(self) -> dict[str, Any]:
-        self._poll()
-        if self._state == ServerState.RUNNING:
-            return {"state": "already_running", "pid": self.pid}
-        exe = instance_server_exe(self._instance_id)
-        cfg = instance_config(self._instance_id)
-        prof = instance_profile(self._instance_id)
-        if not exe.exists():
-            raise RuntimeError("Server binary not installed. Run Install Server first.")
-        prof.mkdir(parents=True, exist_ok=True)
-        log_dir = prof / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        from .startup_params import build_launch_args
-        launch_args = build_launch_args(instance_id=self._instance_id)
-        args = [str(exe)] + launch_args
-        self._log_file = open(log_dir / "console.log", "a", encoding="utf-8", errors="replace")
-        kwargs: dict[str, Any] = {
-            "cwd": str(exe.parent),
-            "stdout": self._log_file,
-            "stderr": self._log_file,
-        }
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        self._process = subprocess.Popen(args, **kwargs)
-        self._state = ServerState.RUNNING
-        self._start_time = time.time()
-        return {"state": "started", "pid": self._process.pid}
+        with self._lock:
+            self._poll()
+            if self._state == ServerState.RUNNING:
+                return {"state": "already_running", "pid": self.pid}
+            exe = instance_server_exe(self._instance_id)
+            cfg = instance_config(self._instance_id)
+            prof = instance_profile(self._instance_id)
+            if not exe.exists():
+                raise RuntimeError("Server binary not installed. Run Install Server first.")
+            prof.mkdir(parents=True, exist_ok=True)
+            log_dir = prof / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            from .startup_params import build_launch_args
+            launch_args = build_launch_args(instance_id=self._instance_id)
+            args = [str(exe)] + launch_args
+            self._log_file = open(log_dir / "console.log", "a", encoding="utf-8", errors="replace")
+            kwargs: dict[str, Any] = {
+                "cwd": str(exe.parent),
+                "stdout": self._log_file,
+                "stderr": self._log_file,
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            try:
+                self._process = subprocess.Popen(args, **kwargs)
+            except Exception:
+                self._close_log()
+                raise
+            self._state = ServerState.RUNNING
+            self._start_time = time.time()
+            return {"state": "started", "pid": self._process.pid}
 
     def stop(self) -> dict[str, Any]:
-        self._poll()
-        if self._state != ServerState.RUNNING or self._process is None:
-            return {"state": "already_stopped"}
-        self._state = ServerState.STOPPING
-        if sys.platform == "win32":
-            self._process.send_signal(signal.CTRL_BREAK_EVENT)
-        else:
-            self._process.terminate()
-        try:
-            self._process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait(timeout=5)
-        self._state = ServerState.STOPPED
-        self._process = None
-        self._start_time = None
-        return {"state": "stopped"}
+        with self._lock:
+            self._poll()
+            if self._state != ServerState.RUNNING or self._process is None:
+                return {"state": "already_stopped"}
+            self._state = ServerState.STOPPING
+            if sys.platform == "win32":
+                self._process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                self._process.terminate()
+            try:
+                self._process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                try:
+                    self._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log.warning("instance %s did not reap after kill", self._instance_id)
+            self._state = ServerState.STOPPED
+            self._process = None
+            self._start_time = None
+            self._close_log()
+            return {"state": "stopped"}
 
     def restart(self) -> dict[str, Any]:
-        self.stop()
-        return self.start()
+        with self._lock:
+            self.stop()
+            return self.start()

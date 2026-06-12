@@ -4,7 +4,76 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .. import paths
 from ..paths import CONFIG_JSON, instance_config
+
+
+class ConfigWipeError(ValueError):
+    """A whole-config write would silently destroy critical settings."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        super().__init__("; ".join(reasons))
+        self.reasons = reasons
+
+
+def _dig(cfg: dict, *keys: str) -> Any:
+    cur: Any = cfg
+    for k in keys:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    return cur
+
+
+_GUARDED_PORTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("bindPort", ("bindPort",)),
+    ("a2s.port", ("a2s", "port")),
+    ("rcon.port", ("rcon", "port")),
+)
+
+
+def _sibling_configs(instance_id: int) -> list[tuple[int, dict]]:
+    out: list[tuple[int, dict]] = []
+    if not paths.INSTANCES_DIR.exists():
+        return out
+    for d in paths.INSTANCES_DIR.iterdir():
+        if not (d.is_dir() and d.name.isdigit()):
+            continue
+        other_id = int(d.name)
+        if other_id == instance_id:
+            continue
+        try:
+            out.append((other_id, json.loads(paths.instance_config(other_id).read_text())))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def _wipe_reasons(old: dict, new: dict, *, instance_id: int | None = None) -> list[str]:
+    reasons: list[str] = []
+    if old:
+        old_game = old.get("game") or {}
+        new_game = new.get("game") or {}
+        if old_game and not new_game:
+            reasons.append("'game' section would be removed")
+        for field in ("name", "scenarioId"):
+            if (old_game.get(field) or "").strip() and not (new_game.get(field) or "").strip():
+                reasons.append(f"game.{field} would be blanked")
+        for label, keys in _GUARDED_PORTS:
+            ov = _dig(old, *keys)
+            nv = _dig(new, *keys)
+            if isinstance(ov, int) and ov > 0 and not (isinstance(nv, int) and nv > 0):
+                reasons.append(f"{label} {ov} would be cleared")
+    if instance_id is not None:
+        for label, keys in _GUARDED_PORTS:
+            nv = _dig(new, *keys)
+            ov = _dig(old, *keys)
+            if not (isinstance(nv, int) and nv > 0) or nv == ov:
+                continue
+            for other_id, other_cfg in _sibling_configs(instance_id):
+                if nv == _dig(other_cfg, *keys):
+                    reasons.append(f"{label} {nv} collides with instance {other_id}")
+    return reasons
 
 
 def _deep_merge(dst: dict, src: dict) -> dict:
@@ -31,8 +100,19 @@ def read_config(config_path: Path | None = None, *, instance_id: int | None = No
     return json.loads(p.read_text())
 
 
-def write_config(config: dict[str, Any], config_path: Path | None = None, *, instance_id: int | None = None) -> None:
+def write_config(config: dict[str, Any], config_path: Path | None = None, *, instance_id: int | None = None,
+                 guard: bool = True) -> None:
     p = _resolve_cfg(config_path, instance_id)
+    if guard:
+        old: dict[str, Any] = {}
+        if p.exists():
+            try:
+                old = json.loads(p.read_text())
+            except ValueError:
+                old = {}
+        reasons = _wipe_reasons(old, config, instance_id=instance_id)
+        if reasons:
+            raise ConfigWipeError(reasons)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(config, indent=2) + "\n")

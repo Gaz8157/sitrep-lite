@@ -7,10 +7,12 @@ from ..db.panel import get_conn
 
 def create(user_id: int, ttl_sec: int = 300) -> str:
     token = secrets.token_hex(16)
+    now = int(time.time())
     with get_conn() as c:
+        c.execute("DELETE FROM pending_2fa WHERE expires_at <= ?", (now,))
         c.execute(
             "INSERT INTO pending_2fa (token, user_id, expires_at) VALUES (?,?,?)",
-            (token, user_id, int(time.time()) + ttl_sec),
+            (token, user_id, now + ttl_sec),
         )
     return token
 

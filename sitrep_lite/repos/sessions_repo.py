@@ -12,6 +12,7 @@ def create(*, user_id: int, ttl_sec: int, ip: str | None,
     sid = new_refresh_token()
     now = int(time.time())
     with get_conn() as c:
+        c.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
         c.execute(
             """INSERT INTO sessions (id, user_id, created_at, expires_at,
                                      last_used_at, ip, user_agent, remember)

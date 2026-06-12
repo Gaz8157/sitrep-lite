@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 import psutil
@@ -36,7 +37,7 @@ async def create_server(payload: dict, user=Depends(require_role(*_OWNER_ONLY)))
 @router.delete("/{instance_id}")
 async def delete_server(instance_id: int, user=Depends(require_server_role(*_OWNER_ONLY))) -> dict:
     from ..engine.instance_manager import delete_instance
-    return delete_instance(instance_id)
+    return await asyncio.to_thread(delete_instance, instance_id)
 
 
 @router.put("/{instance_id}/name")
@@ -61,8 +62,7 @@ async def start_server(instance_id: int, user=Depends(require_server_role(*_OP_R
             return {"state": "installing", "message": "Server is being installed. Check Console for progress."}
         await install_server(instance_id=instance_id)
         return {"state": "installing", "message": "Installing server via SteamCMD. Check Console for progress."}
-    import asyncio
-    result = _get_engine(instance_id).lifecycle.start()
+    result = await asyncio.to_thread(_get_engine(instance_id).lifecycle.start)
     if result.get("state") == "started":
         await asyncio.sleep(3)
         engine = _get_engine(instance_id)
@@ -78,7 +78,7 @@ async def update_server(instance_id: int, user=Depends(require_server_role(*_ADM
     from ..engine.steamcmd import update_server as do_update
     engine = _get_engine(instance_id)
     if engine.lifecycle.pid:
-        engine.lifecycle.stop()
+        await asyncio.to_thread(engine.lifecycle.stop)
     await do_update(instance_id=instance_id)
     return {"state": "updating", "message": "Updating server via SteamCMD. Check Console for progress."}
 
@@ -91,12 +91,12 @@ async def get_install_status(instance_id: int, user=Depends(require_server_role(
 
 @router.post("/{instance_id}/stop")
 async def stop_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
-    return _get_engine(instance_id).lifecycle.stop()
+    return await asyncio.to_thread(_get_engine(instance_id).lifecycle.stop)
 
 
 @router.post("/{instance_id}/restart")
 async def restart_server(instance_id: int, user=Depends(require_server_role(*_OP_ROLES))) -> dict:
-    return _get_engine(instance_id).lifecycle.restart()
+    return await asyncio.to_thread(_get_engine(instance_id).lifecycle.restart)
 
 
 @router.post("/{instance_id}/install")
@@ -115,16 +115,25 @@ async def get_config(instance_id: int, user=Depends(require_server_role(*_READ_R
 @router.put("/{instance_id}/config")
 async def put_config(instance_id: int, payload: dict,
                      user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
-    from ..engine.config import write_config
-    write_config(payload, instance_id=instance_id)
+    from ..engine.config import ConfigWipeError, validate_config, write_config
+    errors = validate_config(payload)
+    if errors:
+        raise HTTPException(status_code=400, detail={"errors": errors})
+    try:
+        write_config(payload, instance_id=instance_id)
+    except ConfigWipeError as e:
+        raise HTTPException(status_code=409, detail={"blocked": e.reasons})
     return {"config": payload}
 
 
 @router.patch("/{instance_id}/config")
 async def patch_config(instance_id: int, payload: dict,
                        user=Depends(require_server_role(*_ADMIN_ROLES))) -> dict:
-    from ..engine.config import patch_config as do_patch
-    result = do_patch(payload, instance_id=instance_id)
+    from ..engine.config import ConfigWipeError, patch_config as do_patch
+    try:
+        result = do_patch(payload, instance_id=instance_id)
+    except ConfigWipeError as e:
+        raise HTTPException(status_code=409, detail={"blocked": e.reasons})
     return {"config": result}
 
 

@@ -18,4 +18,11 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setattr(p, "SECRETS_FILE", tmp_path / "data" / "secrets.json")
     monkeypatch.setattr(p, "STEAMCMD_EXE", tmp_path / "steamcmd" / "steamcmd.exe")
     monkeypatch.setattr(p, "SERVER_EXE", tmp_path / "server" / "ArmaReforgerServer.exe")
+    monkeypatch.setattr(p, "INSTANCES_DIR", tmp_path / "instances")
     p.ensure_dirs()
+
+    from sitrep_lite.engine import instance_manager
+    instance_manager._engines.clear()
+
+    from sitrep_lite.services import rate_limit
+    rate_limit.reset()

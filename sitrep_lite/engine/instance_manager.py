@@ -7,7 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..paths import INSTANCES_DIR, instance_dir, instance_config
+from .. import paths
+from ..paths import instance_dir, instance_config
 from .server_engine import ServerEngine
 from .config import ensure_default_config_for
 
@@ -32,10 +33,10 @@ def _save_meta(instance_id: int, meta: dict[str, Any]) -> None:
 
 
 def list_instances() -> list[dict[str, Any]]:
-    if not INSTANCES_DIR.exists():
+    if not paths.INSTANCES_DIR.exists():
         return []
     instances = []
-    for d in sorted(INSTANCES_DIR.iterdir()):
+    for d in sorted(paths.INSTANCES_DIR.iterdir()):
         if d.is_dir() and d.name.isdigit():
             iid = int(d.name)
             meta = _load_meta(iid)
@@ -46,8 +47,8 @@ def list_instances() -> list[dict[str, Any]]:
 
 
 def create_instance(name: str = "") -> dict[str, Any]:
-    INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
-    existing = [int(d.name) for d in INSTANCES_DIR.iterdir() if d.is_dir() and d.name.isdigit()]
+    paths.INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
+    existing = [int(d.name) for d in paths.INSTANCES_DIR.iterdir() if d.is_dir() and d.name.isdigit()]
     new_id = max(existing, default=0) + 1
     d = instance_dir(new_id)
     d.mkdir(parents=True, exist_ok=True)
@@ -86,8 +87,8 @@ def get_engine(instance_id: int) -> ServerEngine:
 
 def ensure_default_instance() -> None:
     """Create instance 1 if no instances exist."""
-    if not INSTANCES_DIR.exists() or not any(
-        d.is_dir() and d.name.isdigit() for d in INSTANCES_DIR.iterdir()
+    if not paths.INSTANCES_DIR.exists() or not any(
+        d.is_dir() and d.name.isdigit() for d in paths.INSTANCES_DIR.iterdir()
     ):
         create_instance("Server 1")
 
