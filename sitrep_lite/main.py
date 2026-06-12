@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     await aclose_shared_client()
 
 
-app = FastAPI(title="SITREP Lite", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="SITREP Lite", version="1.2.1", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(server.router)
 app.include_router(system.router)
@@ -71,7 +71,7 @@ app.include_router(workshop.router)
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": "1.0.0", "uptime_sec": round(time.time() - _BOOT_TS, 3)}
+    return {"status": "ok", "version": "1.2.1", "uptime_sec": round(time.time() - _BOOT_TS, 3)}
 
 
 import json as _json_mod
